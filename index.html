@@ -76,20 +76,29 @@ var SB_URL = 'https://cyldveojnpfrkbkgppky.supabase.co';
 var SB_KEY = 'sb_publishable_Fwvj4Kdd2dZYdZztsTy8Yw_aZUtb8v-';
 var sb = supabase.createClient(SB_URL, SB_KEY);
 
-var KINDS = {wordpress:'WordPress', webhook:'Custom webhook', browser:'Browser login', manual:'Manual queue'};
+var KINDS = {hackmd:'HackMD (auto)', wordpress:'WordPress', webhook:'Custom webhook', browser:'Browser login', manual:'Manual queue'};
 var HELP = {
-  wordpress:'Publishes through the WordPress REST API with an Application Password.',
-  webhook:'Your site receives the article at an endpoint and returns the live link.',
-  browser:'An automated browser logs in and fills the post form. May pause on captcha or 2FA.',
+  hackmd:'Publishes automatically through the HackMD API. After saving the site, add its API token below.',
+  wordpress:'Coming soon. For now these articles wait in the queue.',
+  webhook:'Coming soon. For now these articles wait in the queue.',
+  browser:'Coming soon. For now these articles wait in the queue.',
   manual:'Article waits in a queue. You post it and paste the live link yourself.'
 };
-var ui = {view:'auth', tab:'signin', filter:'all', adminTab:'sites', kind:'wordpress', pick:null, err:'', info:'', flash:'', busy:false};
-var S = {prof:null, sites:[], subs:[], users:[]};
+var ui = {view:'auth', tab:'signin', filter:'all', adminTab:'sites', kind:'hackmd', pick:null, err:'', info:'', flash:'', busy:false};
+var S = {prof:null, sites:[], subs:[], users:[], tokens:[]};
 
 function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function safeUrl(u){return /^https?:\/\//i.test(u)?u:'';}
 function fdate(s){try{return new Date(s).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});}catch(e){return '';}}
-function isAuto(s){return s.kind!=='manual';}
+function isAuto(s){return s.kind==='hackmd';}
+async function api(body){
+  var ses = (await sb.auth.getSession()).data.session;
+  if(!ses) throw new Error('Please sign in again.');
+  var r = await fetch('/api/pf',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+ses.access_token},body:JSON.stringify(body)});
+  var j = {}; try{ j = await r.json(); }catch(e){}
+  if(!r.ok) throw new Error(j.error || ('Server error '+r.status));
+  return j;
+}
 function isAdmin(){return !!(S.prof && S.prof.is_admin);}
 
 var LOGO = '<i><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0B0C10" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg></i>';
@@ -102,7 +111,11 @@ async function loadAll(){
   if(isAdmin()){
     var u = await sb.from('profiles').select('*').order('created_at',{ascending:true});
     if(u.error) throw u.error; S.users = u.data||[];
-  } else S.users = [];
+    S.tokens = [];
+    if(S.sites.some(function(x){return x.kind==='hackmd';})){
+      try{ S.tokens = (await api({action:'secrets'})).sites || []; }catch(e){ S.tokens = []; }
+    }
+  } else { S.users = []; S.tokens = []; }
 }
 
 async function enter(session){
@@ -181,7 +194,7 @@ function vSubmit(){
    +'<div class="fld"><label>1. Choose website</label><div style="display:flex;flex-wrap:wrap;gap:10px">'+chips+'</div></div>'
    +'<div class="fld"><label for="t">2. Article title</label><input id="t" name="title" required placeholder="Your article title"></div>'
    +'<div class="fld"><label for="b">3. Paste your article</label><textarea id="b" name="body" rows="10" required placeholder="Paste your full article here, including your link"></textarea></div>'
-   +'<button class="btn lg" type="submit"'+(ui.busy?' disabled':'')+'>Submit Article</button></form>'
+   +'<button class="btn lg" type="submit"'+(ui.busy?' disabled':'')+'>'+(ui.busy?'Working...':'Submit Article')+'</button></form>'
    +'<div class="card" style="flex:1 1 280px;min-width:0"><div class="mut2" style="text-transform:uppercase;letter-spacing:.06em">Selected site</div><h2 style="font-size:24px;margin:8px 0 16px">'+esc(cur.name)+'</h2>'
    +'<div style="display:flex;justify-content:space-between;margin-bottom:8px"><span class="mut2">Connector</span><span>'+esc(KINDS[cur.kind])+'</span></div>'
    +'<div style="display:flex;justify-content:space-between;margin-bottom:8px"><span class="mut2">Link type</span><span>'+(cur.link_type==='dofollow'?'Dofollow':'Nofollow')+'</span></div>'
@@ -194,11 +207,19 @@ function vLinks(){
     var st = s.status==='live' ? '<span class="pill ok">Live</span>' : s.status==='failed' ? '<span class="pill bad">Failed</span>' : '<span class="pill gold">'+(s.status==='publishing'?'Publishing':'In queue')+'</span>';
     var act = url ? '<a class="btn sm ghost" href="'+esc(url)+'" target="_blank" rel="noopener noreferrer">Open link</a><button class="btn sm" data-a="copy" data-v="'+esc(url)+'">Copy link</button>' : '<span class="mut2">Waiting for live link</span>';
     var who = isAdmin() ? ' · '+esc(userName(s.user_id)) : '';
-    return '<div class="row"><div class="grow"><b>'+esc(s.title)+'</b><div class="mut2">'+esc(s.site_name)+' · '+esc(fdate(s.created_at))+who+'</div></div>'+st+'<div style="display:flex;gap:8px;flex-wrap:wrap">'+act+'</div></div>';
+    return '<div class="row"><div class="grow"><b>'+esc(s.title)+'</b><div class="mut2">'+esc(s.site_name)+' · '+esc(fdate(s.created_at))+who+'</div>'+(s.status==='failed'&&s.error?'<div class="mut2" style="color:var(--bad)">'+esc(s.error)+'</div>':'')+'</div>'+st+'<div style="display:flex;gap:8px;flex-wrap:wrap">'+act+'</div></div>';
   }).join('') : '<div class="row mut">No submissions yet. Submit your first article to see it here.</div>';
   return '<h1 style="font-size:34px">Live links</h1><p class="mut" style="margin:-14px 0 0">'+(isAdmin()?'All articles from all users.':'All your articles with live link, date and status.')+'</p><div style="display:flex;flex-direction:column;gap:10px">'+rows+'</div>';
 }
 function userName(id){var u=S.users.filter(function(x){return x.id===id;})[0];return u?(u.name||u.email):'user';}
+
+function tokenRow(s){
+  var has = S.tokens.indexOf(s.id)>=0;
+  return '<div style="flex:1 1 100%;display:flex;flex-wrap:wrap;gap:8px;align-items:center">'
+   +'<span class="pill '+(has?'ok':'gold')+'">'+(has?'Token saved':'No token yet')+'</span>'
+   +'<input id="tok-'+esc(s.id)+'" type="password" autocomplete="off" placeholder="Paste HackMD API token" style="flex:1 1 200px">'
+   +'<button class="btn sm" data-a="savetok" data-id="'+esc(s.id)+'">'+(has?'Replace token':'Save token')+'</button></div>';
+}
 
 function vAdmin(){
   if(!isAdmin()) return '<div class="row mut">Admins only.</div>';
@@ -211,13 +232,14 @@ function vAdmin(){
       return '<div class="row in"><div class="grow" style="flex-basis:180px"><b>'+esc(s.name)+'</b><div class="mut2">'+esc(KINDS[s.kind])+' · DA '+esc(s.da==null?'-':s.da)+' · DR '+esc(s.dr==null?'-':s.dr)+'</div></div>'
        +'<span class="pill '+(s.active?'ok':'')+'">'+(s.active?'ON':'OFF')+'</span>'
        +'<button class="sw '+(s.active?'on':'')+'" data-a="togsite" data-id="'+esc(s.id)+'" aria-label="Toggle '+esc(s.name)+'"><i></i></button>'
-       +'<button class="btn sm danger" data-a="delsite" data-id="'+esc(s.id)+'">Remove</button></div>';
+       +'<button class="btn sm danger" data-a="delsite" data-id="'+esc(s.id)+'">Remove</button>'
+       +(s.kind==='hackmd' ? tokenRow(s) : '')+'</div>';
     }).join('') || '<div class="mut">No websites yet.</div>';
     body = '<div class="two"><form class="card" data-form="addsite" style="flex:1 1 380px;min-width:0"><h2 style="font-size:22px;margin-bottom:18px">Add a website</h2>'
      +'<div class="fld"><label for="sn">Website name</label><input id="sn" name="name" required placeholder="yoursite.com"></div>'
      +'<div class="fld"><label>Connector type</label><div style="display:flex;flex-wrap:wrap;gap:8px">'+kinds+'</div><p class="mut2" style="margin:8px 0 0">'+esc(HELP[ui.kind])+'</p></div>'
      +'<div style="display:flex;gap:12px" class="fld"><div style="flex:1"><label for="sa">DA</label><input id="sa" name="da" type="number" min="0" max="100"></div><div style="flex:1"><label for="sd">DR</label><input id="sd" name="dr" type="number" min="0" max="100"></div><div style="flex:1.3"><label for="sl">Link type</label><select id="sl" name="link"><option value="dofollow">Dofollow</option><option value="nofollow">Nofollow</option></select></div></div>'
-     +'<div class="note" style="margin-bottom:18px">Site logins and post URLs are added in the next step (server side, encrypted). Do not type passwords here.</div>'
+     +'<div class="note" style="margin-bottom:18px">For HackMD sites, save the site first, then paste its API token in the list on the right. Tokens are stored encrypted on the server and are never shown again.</div>'
      +'<button class="btn lg" type="submit"'+(ui.busy?' disabled':'')+'>Save website</button></form>'
      +'<div class="card" style="flex:1.4 1 460px;min-width:0"><h2 style="font-size:22px;margin-bottom:16px">Connected websites</h2><div style="display:flex;flex-direction:column;gap:10px">'+list+'</div></div></div>';
   } else if(ui.adminTab==='queue'){
@@ -225,6 +247,8 @@ function vAdmin(){
     body = '<div class="card"><h2 style="font-size:22px;margin-bottom:16px">Articles waiting to be posted</h2><div style="display:flex;flex-direction:column;gap:10px">'
      +(qs.length ? qs.map(function(s){
        return '<div class="row in"><div class="grow" style="flex-basis:220px"><b>'+esc(s.title)+'</b><div class="mut2">'+esc(s.site_name)+' · '+esc(userName(s.user_id))+' · '+esc(fdate(s.created_at))+'</div></div>'
+        +(function(){var ss=S.sites.filter(function(x){return x.id===s.site_id;})[0];return ss&&ss.kind==='hackmd'?'<button class="btn sm ghost" data-a="retry" data-id="'+esc(s.id)+'">Auto-publish now</button>':'';})()
+        +(s.status==='failed'&&s.error?'<div class="mut2" style="flex:1 1 100%;color:var(--bad)">'+esc(s.error)+'</div>':'')
         +'<button class="btn sm ghost" data-a="copyart" data-id="'+esc(s.id)+'">Copy article</button>'
         +'<input id="q-'+esc(s.id)+'" placeholder="Paste live link (https://...)" style="flex:1 1 220px">'
         +'<button class="btn sm" data-a="setlive" data-id="'+esc(s.id)+'">Mark live</button></div>';
@@ -266,6 +290,18 @@ document.addEventListener('click', async function(e){
     else if(a==='togsite'){var st=S.sites.filter(function(x){return x.id===id;})[0];var r1=await sb.from('sites').update({active:!st.active}).eq('id',id);if(r1.error)throw r1.error;await reload();}
     else if(a==='delsite'){if(confirm('Remove this website?')){var r2=await sb.from('sites').delete().eq('id',id);if(r2.error)throw r2.error;await reload('Website removed.');}}
     else if(a==='touser'){var us=S.users.filter(function(x){return x.id===id;})[0];var r3=await sb.from('profiles').update({active:!us.active}).eq('id',id);if(r3.error)throw r3.error;await reload();}
+    else if(a==='savetok'){
+      var ti = document.getElementById('tok-'+id); var tv = ti?ti.value.trim():'';
+      if(!tv){ui.flash='Paste the API token first.';render();return;}
+      el.disabled = true;
+      await api({action:'save-secret',site_id:id,token:tv});
+      await reload('Token saved. It is stored encrypted on the server.');
+    }
+    else if(a==='retry'){
+      el.disabled = true; ui.flash='Publishing...'; render();
+      try{ var rr = await api({action:'publish',submission_id:id}); await reload('Published: '+rr.live_url); }
+      catch(x){ await reload('Auto-publish failed: '+(x.message||x)); }
+    }
     else if(a==='setlive'){
       var inp = document.getElementById('q-'+id); var url = inp?safeUrl(inp.value.trim()):'';
       if(!url){ui.flash='Paste a valid link starting with http:// or https://';render();return;}
@@ -296,10 +332,16 @@ document.addEventListener('submit', async function(e){
     } else if(k==='submit'){
       var site = S.sites.filter(function(s){return s.id===ui.pick;})[0];
       if(!site) throw new Error('Choose a website first.');
-      var r3 = await sb.from('submissions').insert({site_id:site.id,site_name:site.name,title:g('title'),body:g('body')});
+      var r3 = await sb.from('submissions').insert({site_id:site.id,site_name:site.name,title:g('title'),body:g('body')}).select('id').single();
       if(r3.error) throw r3.error;
+      var msg;
+      if(isAuto(site)){
+        ui.flash='Publishing your article...'; render();
+        try{ await api({action:'publish',submission_id:r3.data.id}); msg='Published. Your live link is ready.'; }
+        catch(x){ msg='Saved in the queue, but auto-publish did not finish: '+(x.message||x); }
+      } else msg='Submitted. It is in the queue and your link will appear after posting.';
       ui.busy=false; await loadAll();
-      ui.flash = isAuto(site) ? 'Submitted. It is in the queue. Automatic publishing for this site is connected in the next step.' : 'Submitted. It is in the queue and your link will appear after posting.';
+      ui.flash = msg;
       go('links'); return;
     } else if(k==='addsite'){
       var da = g('da'), dr = g('dr');
