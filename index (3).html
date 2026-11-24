@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PublishFlow</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root{--bg:#0B0C10;--p:#14161C;--p2:#0E1016;--b:#262A33;--b2:#343946;--g:#D4AF37;--g2:#E8C964;--t:#F3F1EA;--m:#A7ADB8;--m2:#8E94A1;--ok:#6FD39A;--bad:#F28B8B}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--t);font-family:Inter,system-ui,sans-serif;line-height:1.5}
+h1,h2,h3{font-family:'Space Grotesk',sans-serif;margin:0}
+button,input,select,textarea{font:inherit;color:inherit}
+input,select,textarea{width:100%;background:var(--p2);border:1px solid var(--b2);border-radius:10px;padding:0 14px;height:46px}
+textarea{padding:12px 14px;height:auto;resize:vertical;line-height:1.6}
+select option{background:#14161C}
+input:focus,select:focus,textarea:focus,button:focus-visible,a:focus-visible{outline:2px solid var(--g);outline-offset:1px}
+label{display:block;font-size:14px;font-weight:500;color:#D9D6CC;margin-bottom:8px}
+a{color:var(--g)}
+.btn{height:46px;padding:0 20px;border:0;border-radius:10px;background:var(--g);color:#0B0C10;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
+.btn:hover{background:var(--g2)}
+.btn[disabled]{opacity:.6;cursor:wait}
+.btn.lg{height:52px;width:100%;font-size:16px;border-radius:12px}
+.btn.sm{height:38px;padding:0 14px;font-size:14px}
+.ghost{background:var(--p2);color:var(--t);border:1px solid var(--b2)}
+.ghost:hover{background:#1B1F28}
+.danger{background:#241214;color:var(--bad);border:1px solid #5A2A2A}
+.danger:hover{background:#311619}
+.card{background:var(--p);border:1px solid var(--b);border-radius:20px;padding:28px}
+.row{display:flex;flex-wrap:wrap;align-items:center;gap:14px 24px;background:var(--p);border:1px solid var(--b);border-radius:16px;padding:16px 20px}
+.row.in{background:var(--p2)}
+.grow{flex:1 1 240px;min-width:0}
+.mut{color:var(--m)}.mut2{color:var(--m2);font-size:13px}
+.pill{display:inline-block;padding:6px 12px;border-radius:999px;font-size:13px;background:#1E222B;border:1px solid var(--b2);color:var(--m);text-align:center}
+.pill.gold{background:#2A2410;border-color:#5A4B16;color:var(--g2)}
+.pill.ok{background:#12261A;border-color:#1F5A36;color:var(--ok)}
+.pill.bad{background:#241214;border-color:#5A2A2A;color:var(--bad)}
+.seg{display:inline-flex;gap:6px;padding:5px;background:var(--p);border:1px solid var(--b);border-radius:12px;flex-wrap:wrap}
+.seg button{height:38px;padding:0 16px;border:0;border-radius:8px;background:transparent;color:var(--m);font-weight:500;cursor:pointer}
+.seg button.on{background:var(--g);color:#0B0C10;font-weight:600}
+.chip{height:44px;padding:0 18px;border-radius:10px;border:1px solid var(--b2);background:var(--p2);color:#C9CCD3;font-weight:500;cursor:pointer}
+.chip.on{border-color:var(--g);background:#2A2410;color:var(--g2);font-weight:600}
+header.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px;padding:16px 40px;border-bottom:1px solid #1E222B;background:var(--p2)}
+.logo{display:flex;align-items:center;gap:10px;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:20px}
+.logo i{width:36px;height:36px;border-radius:10px;background:var(--g);display:flex;align-items:center;justify-content:center}
+nav{display:flex;flex-wrap:wrap;gap:6px}
+nav button{height:40px;padding:0 16px;border:0;border-radius:10px;background:transparent;color:#C9CCD3;cursor:pointer;font-size:15px}
+nav button.on{background:#1B1F28;color:var(--g);font-weight:500}
+main{max-width:1200px;margin:0 auto;padding:36px 40px 56px;display:flex;flex-direction:column;gap:24px}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+.stat{background:var(--p);border:1px solid var(--b);border-radius:16px;padding:20px}
+.stat b{display:block;font-family:'Space Grotesk',sans-serif;font-size:30px;color:var(--g)}
+.two{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start}
+.fld{margin-bottom:18px}
+.auth{min-height:100vh;display:flex;flex-wrap:wrap}
+.hero{flex:1 1 520px;padding:56px 64px;display:flex;flex-direction:column;justify-content:space-between;gap:40px}
+.hero h1{font-size:50px;line-height:1.08;letter-spacing:-.02em}
+.authside{flex:1 1 420px;background:#11131A;border-left:1px solid #1E222B;display:flex;align-items:center;justify-content:center;padding:40px 24px}
+.authc{width:100%;max-width:420px}
+.err{color:var(--bad);font-size:14px;margin:0 0 14px}
+.info{color:var(--g2);font-size:14px;margin:0 0 14px}
+.note{background:#2A2410;border:1px solid #5A4B16;color:var(--g2);padding:12px 16px;border-radius:12px;font-size:14px}
+.sw{width:46px;height:26px;border-radius:999px;border:0;background:var(--b2);padding:3px;display:flex;cursor:pointer;justify-content:flex-start}
+.sw.on{background:var(--g);justify-content:flex-end}
+.sw i{width:20px;height:20px;border-radius:50%;background:#0B0C10;display:block}
+@media(max-width:760px){header.top,main{padding-left:18px;padding-right:18px}.hero{padding:32px 22px}.hero h1{font-size:36px}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+</head>
+<body>
+<div id="app"><p style="padding:40px" class="mut">Loading...</p></div>
+<script>
+'use strict';
+var SB_URL = 'https://cyldveojnpfrkbkgppky.supabase.co';
+var SB_KEY = 'sb_publishable_Fwvj4Kdd2dZYdZztsTy8Yw_aZUtb8v-';
+var sb = supabase.createClient(SB_URL, SB_KEY);
+
+var KINDS = {wordpress:'WordPress', webhook:'Custom webhook', browser:'Browser login', manual:'Manual queue'};
+var HELP = {
+  wordpress:'Publishes through the WordPress REST API with an Application Password.',
+  webhook:'Your site receives the article at an endpoint and returns the live link.',
+  browser:'An automated browser logs in and fills the post form. May pause on captcha or 2FA.',
+  manual:'Article waits in a queue. You post it and paste the live link yourself.'
+};
+var ui = {view:'auth', tab:'signin', filter:'all', adminTab:'sites', kind:'wordpress', pick:null, err:'', info:'', flash:'', busy:false};
+var S = {prof:null, sites:[], subs:[], users:[]};
+
+function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function safeUrl(u){return /^https?:\/\//i.test(u)?u:'';}
+function fdate(s){try{return new Date(s).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});}catch(e){return '';}}
+function isAuto(s){return s.kind!=='manual';}
+function isAdmin(){return !!(S.prof && S.prof.is_admin);}
+
+var LOGO = '<i><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0B0C10" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg></i>';
+
+async function loadAll(){
+  var r = await sb.from('sites').select('*').order('created_at',{ascending:true});
+  if(r.error) throw r.error; S.sites = r.data||[];
+  var s = await sb.from('submissions').select('*').order('created_at',{ascending:false});
+  if(s.error) throw s.error; S.subs = s.data||[];
+  if(isAdmin()){
+    var u = await sb.from('profiles').select('*').order('created_at',{ascending:true});
+    if(u.error) throw u.error; S.users = u.data||[];
+  } else S.users = [];
+}
+
+async function enter(session){
+  var p = await sb.from('profiles').select('*').eq('id', session.user.id).single();
+  if(p.error || !p.data){ await sb.auth.signOut(); ui.view='auth'; ui.err='Could not load your profile. Did you run schema.sql in Supabase?'; render(); return; }
+  if(!p.data.active){ await sb.auth.signOut(); S.prof=null; ui.view='auth'; ui.err='This account is turned off.'; render(); return; }
+  S.prof = p.data;
+  await loadAll();
+  ui.view = 'dash'; ui.err=''; ui.info='';
+  render();
+}
+
+function go(v){ui.view=v;ui.err='';render();window.scrollTo(0,0);}
+async function reload(msg){
+  try{ await loadAll(); if(msg) ui.flash=msg; }catch(e){ ui.flash='Error: '+(e.message||e); }
+  render();
+}
+
+function vAuth(){
+  var si = ui.tab==='signin';
+  var msg = (ui.err?'<p class="err" role="alert">'+esc(ui.err)+'</p>':'')+(ui.info?'<p class="info" role="status">'+esc(ui.info)+'</p>':'');
+  var dis = ui.busy?' disabled':'';
+  var form = si
+   ? '<form data-form="signin"><h2 style="font-size:26px;margin-bottom:6px">Welcome back</h2><p class="mut" style="margin:0 0 20px">Sign in to your account.</p>'+msg
+     +'<div class="fld"><label for="e">Email</label><input id="e" name="email" type="email" required autocomplete="email" placeholder="you@example.com"></div>'
+     +'<div class="fld"><label for="p">Password</label><input id="p" name="pass" type="password" required autocomplete="current-password" placeholder="Your password"></div>'
+     +'<button class="btn lg" type="submit"'+dis+'>Sign In</button></form>'
+   : '<form data-form="register"><h2 style="font-size:26px;margin-bottom:6px">Create your account</h2><p class="mut" style="margin:0 0 20px">Your account is active immediately. No approval needed.</p>'+msg
+     +'<div class="fld"><label for="n">Full name</label><input id="n" name="name" required autocomplete="name" placeholder="Your name"></div>'
+     +'<div class="fld"><label for="e2">Email</label><input id="e2" name="email" type="email" required autocomplete="email" placeholder="you@example.com"></div>'
+     +'<div class="fld"><label for="w">WhatsApp number</label><input id="w" name="wa" type="tel" autocomplete="tel" placeholder="+92 300 0000000"></div>'
+     +'<div class="fld"><label for="p2">Password</label><input id="p2" name="pass" type="password" required minlength="8" autocomplete="new-password" placeholder="At least 8 characters"></div>'
+     +'<button class="btn lg" type="submit"'+dis+'>Create Account</button></form>';
+  return '<div class="auth"><div class="hero"><div class="logo">'+LOGO+'PublishFlow</div>'
+   +'<div style="max-width:540px"><h1>Paste once.<br><span style="color:var(--g)">Publish everywhere.</span></h1>'
+   +'<p class="mut" style="font-size:18px;margin:22px 0 0">Pick a site, paste your article, and your live link lands in your dashboard.</p></div>'
+   +'<span class="mut2">PublishFlow</span></div>'
+   +'<div class="authside"><div class="card authc"><div class="seg" style="display:flex;margin-bottom:24px"><button style="flex:1" data-a="tab" data-v="signin" class="'+(si?'on':'')+'">Sign In</button><button style="flex:1" data-a="tab" data-v="register" class="'+(!si?'on':'')+'">New Registration</button></div>'+form+'</div></div></div>';
+}
+
+function topbar(){
+  var v = ui.view;
+  function b(id,l){return '<button data-a="go" data-v="'+id+'" class="'+(v===id?'on':'')+'">'+l+'</button>';}
+  return '<header class="top"><div class="logo">'+LOGO+'PublishFlow</div><nav>'+b('dash','Dashboard')+b('submit','Submit Article')+b('links','Live Links')+(isAdmin()?b('admin','Admin'):'')+'</nav>'
+   +'<div style="display:flex;align-items:center;gap:12px"><span class="mut" style="font-size:14px">'+esc(S.prof?S.prof.name:'')+'</span><button class="btn sm ghost" data-a="logout">Sign out</button></div></header>';
+}
+
+function vDash(){
+  var live = S.subs.filter(function(s){return s.status==='live';}).length;
+  var q = S.subs.filter(function(s){return s.status!=='live';}).length;
+  var sites = S.sites.filter(function(s){return s.active;});
+  var list = sites.filter(function(s){return ui.filter==='all'||s.link_type===ui.filter;});
+  function f(id,l){return '<button data-a="filter" data-v="'+id+'" class="'+(ui.filter===id?'on':'')+'">'+l+'</button>';}
+  var rows = list.length ? list.map(function(s){
+    return '<div class="row"><div class="grow"><b style="font-size:17px">'+esc(s.name)+'</b><div class="mut2">'+esc(KINDS[s.kind])+'</div></div>'
+     +'<div style="display:flex;gap:24px"><div><div class="mut2">DA</div><b>'+esc(s.da==null?'-':s.da)+'</b></div><div><div class="mut2">DR</div><b>'+esc(s.dr==null?'-':s.dr)+'</b></div></div>'
+     +'<span class="pill">'+(s.link_type==='dofollow'?'Dofollow':'Nofollow')+'</span>'
+     +'<span class="pill '+(isAuto(s)?'gold':'')+'">'+(isAuto(s)?'Auto publish':'Manual queue')+'</span>'
+     +'<button class="btn" data-a="pick" data-id="'+esc(s.id)+'">Submit</button></div>';
+  }).join('') : '<div class="row mut">No websites yet.'+(isAdmin()?' Add your first one in the Admin tab.':'')+'</div>';
+  return '<h1 style="font-size:34px">Your dashboard</h1><p class="mut" style="margin:-14px 0 0">Pick a website, paste your article, and track your live link here.</p>'
+   +'<div class="stats"><div class="stat"><b>'+sites.length+'</b><span class="mut">Websites listed</span></div><div class="stat"><b>'+S.subs.length+'</b><span class="mut">'+(isAdmin()?'All submissions':'My submissions')+'</span></div><div class="stat"><b>'+live+'</b><span class="mut">Live links</span></div><div class="stat"><b>'+q+'</b><span class="mut">In queue</span></div></div>'
+   +'<div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:14px"><h2 style="font-size:22px">Available websites</h2><div class="seg">'+f('all','All')+f('dofollow','Dofollow')+f('nofollow','Nofollow')+'</div></div>'
+   +'<div style="display:flex;flex-direction:column;gap:10px">'+rows+'</div>';
+}
+
+function vSubmit(){
+  var sites = S.sites.filter(function(s){return s.active;});
+  if(!sites.length) return '<h1 style="font-size:34px">Submit an article</h1><div class="row mut">No websites are available right now.</div>';
+  if(!ui.pick || !sites.some(function(s){return s.id===ui.pick;})) ui.pick = sites[0].id;
+  var cur = sites.filter(function(s){return s.id===ui.pick;})[0];
+  var chips = sites.map(function(s){return '<button type="button" class="chip '+(s.id===ui.pick?'on':'')+'" data-a="pick2" data-id="'+esc(s.id)+'">'+esc(s.name)+'</button>';}).join('');
+  return '<h1 style="font-size:34px">Submit an article</h1><p class="mut" style="margin:-14px 0 0">Choose a site and paste your article. Your live link appears in Live Links.</p>'
+   +'<div class="two"><form class="card" data-form="submit" style="flex:999 1 520px;min-width:0">'
+   +(ui.err?'<p class="err" role="alert">'+esc(ui.err)+'</p>':'')
+   +'<div class="fld"><label>1. Choose website</label><div style="display:flex;flex-wrap:wrap;gap:10px">'+chips+'</div></div>'
+   +'<div class="fld"><label for="t">2. Article title</label><input id="t" name="title" required placeholder="Your article title"></div>'
+   +'<div class="fld"><label for="b">3. Paste your article</label><textarea id="b" name="body" rows="10" required placeholder="Paste your full article here, including your link"></textarea></div>'
+   +'<button class="btn lg" type="submit"'+(ui.busy?' disabled':'')+'>Submit Article</button></form>'
+   +'<div class="card" style="flex:1 1 280px;min-width:0"><div class="mut2" style="text-transform:uppercase;letter-spacing:.06em">Selected site</div><h2 style="font-size:24px;margin:8px 0 16px">'+esc(cur.name)+'</h2>'
+   +'<div style="display:flex;justify-content:space-between;margin-bottom:8px"><span class="mut2">Connector</span><span>'+esc(KINDS[cur.kind])+'</span></div>'
+   +'<div style="display:flex;justify-content:space-between;margin-bottom:8px"><span class="mut2">Link type</span><span>'+(cur.link_type==='dofollow'?'Dofollow':'Nofollow')+'</span></div>'
+   +'<div style="display:flex;justify-content:space-between"><span class="mut2">Publishing</span><span style="color:var(--g2)">'+(isAuto(cur)?'Automatic':'Queued for posting')+'</span></div></div></div>';
+}
+
+function vLinks(){
+  var rows = S.subs.length ? S.subs.map(function(s){
+    var url = safeUrl(s.live_url||'');
+    var st = s.status==='live' ? '<span class="pill ok">Live</span>' : s.status==='failed' ? '<span class="pill bad">Failed</span>' : '<span class="pill gold">'+(s.status==='publishing'?'Publishing':'In queue')+'</span>';
+    var act = url ? '<a class="btn sm ghost" href="'+esc(url)+'" target="_blank" rel="noopener noreferrer">Open link</a><button class="btn sm" data-a="copy" data-v="'+esc(url)+'">Copy link</button>' : '<span class="mut2">Waiting for live link</span>';
+    var who = isAdmin() ? ' · '+esc(userName(s.user_id)) : '';
+    return '<div class="row"><div class="grow"><b>'+esc(s.title)+'</b><div class="mut2">'+esc(s.site_name)+' · '+esc(fdate(s.created_at))+who+'</div></div>'+st+'<div style="display:flex;gap:8px;flex-wrap:wrap">'+act+'</div></div>';
+  }).join('') : '<div class="row mut">No submissions yet. Submit your first article to see it here.</div>';
+  return '<h1 style="font-size:34px">Live links</h1><p class="mut" style="margin:-14px 0 0">'+(isAdmin()?'All articles from all users.':'All your articles with live link, date and status.')+'</p><div style="display:flex;flex-direction:column;gap:10px">'+rows+'</div>';
+}
+function userName(id){var u=S.users.filter(function(x){return x.id===id;})[0];return u?(u.name||u.email):'user';}
+
+function vAdmin(){
+  if(!isAdmin()) return '<div class="row mut">Admins only.</div>';
+  function t(id,l){return '<button data-a="atab" data-v="'+id+'" class="'+(ui.adminTab===id?'on':'')+'">'+l+'</button>';}
+  var head = '<div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:14px"><div><h1 style="font-size:34px">Admin panel</h1><p class="mut" style="margin:6px 0 0">Manage websites, queue and users.</p></div><div class="seg">'+t('sites','Websites')+t('queue','Queue')+t('users','Users')+'</div></div>';
+  var body = '';
+  if(ui.adminTab==='sites'){
+    var kinds = Object.keys(KINDS).map(function(k){return '<button type="button" class="chip '+(ui.kind===k?'on':'')+'" data-a="kind" data-v="'+k+'">'+KINDS[k]+'</button>';}).join('');
+    var list = S.sites.map(function(s){
+      return '<div class="row in"><div class="grow" style="flex-basis:180px"><b>'+esc(s.name)+'</b><div class="mut2">'+esc(KINDS[s.kind])+' · DA '+esc(s.da==null?'-':s.da)+' · DR '+esc(s.dr==null?'-':s.dr)+'</div></div>'
+       +'<span class="pill '+(s.active?'ok':'')+'">'+(s.active?'ON':'OFF')+'</span>'
+       +'<button class="sw '+(s.active?'on':'')+'" data-a="togsite" data-id="'+esc(s.id)+'" aria-label="Toggle '+esc(s.name)+'"><i></i></button>'
+       +'<button class="btn sm danger" data-a="delsite" data-id="'+esc(s.id)+'">Remove</button></div>';
+    }).join('') || '<div class="mut">No websites yet.</div>';
+    body = '<div class="two"><form class="card" data-form="addsite" style="flex:1 1 380px;min-width:0"><h2 style="font-size:22px;margin-bottom:18px">Add a website</h2>'
+     +'<div class="fld"><label for="sn">Website name</label><input id="sn" name="name" required placeholder="yoursite.com"></div>'
+     +'<div class="fld"><label>Connector type</label><div style="display:flex;flex-wrap:wrap;gap:8px">'+kinds+'</div><p class="mut2" style="margin:8px 0 0">'+esc(HELP[ui.kind])+'</p></div>'
+     +'<div style="display:flex;gap:12px" class="fld"><div style="flex:1"><label for="sa">DA</label><input id="sa" name="da" type="number" min="0" max="100"></div><div style="flex:1"><label for="sd">DR</label><input id="sd" name="dr" type="number" min="0" max="100"></div><div style="flex:1.3"><label for="sl">Link type</label><select id="sl" name="link"><option value="dofollow">Dofollow</option><option value="nofollow">Nofollow</option></select></div></div>'
+     +'<div class="note" style="margin-bottom:18px">Site logins and post URLs are added in the next step (server side, encrypted). Do not type passwords here.</div>'
+     +'<button class="btn lg" type="submit"'+(ui.busy?' disabled':'')+'>Save website</button></form>'
+     +'<div class="card" style="flex:1.4 1 460px;min-width:0"><h2 style="font-size:22px;margin-bottom:16px">Connected websites</h2><div style="display:flex;flex-direction:column;gap:10px">'+list+'</div></div></div>';
+  } else if(ui.adminTab==='queue'){
+    var qs = S.subs.filter(function(s){return s.status!=='live';});
+    body = '<div class="card"><h2 style="font-size:22px;margin-bottom:16px">Articles waiting to be posted</h2><div style="display:flex;flex-direction:column;gap:10px">'
+     +(qs.length ? qs.map(function(s){
+       return '<div class="row in"><div class="grow" style="flex-basis:220px"><b>'+esc(s.title)+'</b><div class="mut2">'+esc(s.site_name)+' · '+esc(userName(s.user_id))+' · '+esc(fdate(s.created_at))+'</div></div>'
+        +'<button class="btn sm ghost" data-a="copyart" data-id="'+esc(s.id)+'">Copy article</button>'
+        +'<input id="q-'+esc(s.id)+'" placeholder="Paste live link (https://...)" style="flex:1 1 220px">'
+        +'<button class="btn sm" data-a="setlive" data-id="'+esc(s.id)+'">Mark live</button></div>';
+     }).join('') : '<div class="mut">The queue is empty.</div>')+'</div></div>';
+  } else {
+    body = '<div class="card"><h2 style="font-size:22px;margin-bottom:16px">Registered accounts</h2><div style="display:flex;flex-direction:column;gap:10px">'
+     +S.users.map(function(x){
+       var self = x.id===S.prof.id;
+       return '<div class="row in"><div class="grow" style="flex-basis:220px"><b>'+esc(x.name||x.email)+(x.is_admin?' (admin)':'')+'</b><div class="mut2">'+esc(x.email)+(x.wa?' · '+esc(x.wa):'')+'</div></div>'
+        +'<span class="pill '+(x.active?'ok':'')+'">'+(x.active?'Active':'Off')+'</span>'
+        +(self?'':'<button class="btn sm ghost" data-a="touser" data-id="'+esc(x.id)+'">'+(x.active?'Turn off':'Turn on')+'</button>')+'</div>';
+     }).join('')+'</div></div>';
+  }
+  return head+body;
+}
+
+function render(){
+  var app = document.getElementById('app');
+  if(ui.view==='auth' || !S.prof){ ui.view='auth'; app.innerHTML = vAuth(); return; }
+  var v = ui.view==='dash'?vDash():ui.view==='submit'?vSubmit():ui.view==='links'?vLinks():vAdmin();
+  app.innerHTML = topbar()+'<main>'+(ui.flash?'<div class="note" role="status">'+esc(ui.flash)+'</div>':'')+v+'</main>';
+  ui.flash='';
+}
+
+document.addEventListener('click', async function(e){
+  var el = e.target.closest('[data-a]'); if(!el) return;
+  var a = el.dataset.a, v = el.dataset.v, id = el.dataset.id;
+  try{
+    if(a==='tab'){ui.tab=v;ui.err='';ui.info='';render();}
+    else if(a==='go'){ if(v==='links'||v==='admin'||v==='dash') await reload(); go(v);}
+    else if(a==='logout'){await sb.auth.signOut();S.prof=null;ui.view='auth';ui.tab='signin';render();}
+    else if(a==='filter'){ui.filter=v;render();}
+    else if(a==='pick'){ui.pick=id;go('submit');}
+    else if(a==='pick2'){ui.pick=id;render();}
+    else if(a==='atab'){ui.adminTab=v;render();}
+    else if(a==='kind'){ui.kind=v;render();}
+    else if(a==='copy'){try{await navigator.clipboard.writeText(v);ui.flash='Link copied.';}catch(x){ui.flash='Copy failed. Select the link manually.';}render();}
+    else if(a==='copyart'){var s=S.subs.filter(function(x){return x.id===id;})[0];try{await navigator.clipboard.writeText(s.body);ui.flash='Article copied.';}catch(x){ui.flash='Copy failed.';}render();}
+    else if(a==='togsite'){var st=S.sites.filter(function(x){return x.id===id;})[0];var r1=await sb.from('sites').update({active:!st.active}).eq('id',id);if(r1.error)throw r1.error;await reload();}
+    else if(a==='delsite'){if(confirm('Remove this website?')){var r2=await sb.from('sites').delete().eq('id',id);if(r2.error)throw r2.error;await reload('Website removed.');}}
+    else if(a==='touser'){var us=S.users.filter(function(x){return x.id===id;})[0];var r3=await sb.from('profiles').update({active:!us.active}).eq('id',id);if(r3.error)throw r3.error;await reload();}
+    else if(a==='setlive'){
+      var inp = document.getElementById('q-'+id); var url = inp?safeUrl(inp.value.trim()):'';
+      if(!url){ui.flash='Paste a valid link starting with http:// or https://';render();return;}
+      var r4=await sb.from('submissions').update({status:'live',live_url:url}).eq('id',id);if(r4.error)throw r4.error;await reload('Marked live.');
+    }
+  }catch(err){ ui.flash='Error: '+(err.message||err); render(); }
+});
+
+document.addEventListener('submit', async function(e){
+  var f = e.target.closest('form[data-form]'); if(!f) return;
+  e.preventDefault();
+  if(ui.busy) return;
+  var k = f.dataset.form, d = new FormData(f);
+  function g(n){return String(d.get(n)||'').trim();}
+  ui.busy = true; ui.err=''; ui.info='';
+  try{
+    if(k==='register'){
+      var pass = g('pass');
+      if(pass.length<8) throw new Error('Password must be at least 8 characters.');
+      var r = await sb.auth.signUp({email:g('email').toLowerCase(),password:pass,options:{data:{name:g('name'),wa:g('wa')}}});
+      if(r.error) throw r.error;
+      if(!r.data.session){ ui.tab='signin'; ui.info='Account created. Check your email to confirm it, then sign in.'; }
+      else { ui.busy=false; await enter(r.data.session); return; }
+    } else if(k==='signin'){
+      var r2 = await sb.auth.signInWithPassword({email:g('email').toLowerCase(),password:g('pass')});
+      if(r2.error) throw r2.error;
+      ui.busy=false; await enter(r2.data.session); return;
+    } else if(k==='submit'){
+      var site = S.sites.filter(function(s){return s.id===ui.pick;})[0];
+      if(!site) throw new Error('Choose a website first.');
+      var r3 = await sb.from('submissions').insert({site_id:site.id,site_name:site.name,title:g('title'),body:g('body')});
+      if(r3.error) throw r3.error;
+      ui.busy=false; await loadAll();
+      ui.flash = isAuto(site) ? 'Submitted. It is in the queue. Automatic publishing for this site is connected in the next step.' : 'Submitted. It is in the queue and your link will appear after posting.';
+      go('links'); return;
+    } else if(k==='addsite'){
+      var da = g('da'), dr = g('dr');
+      var r4 = await sb.from('sites').insert({name:g('name'),kind:ui.kind,da:da===''?null:parseInt(da,10),dr:dr===''?null:parseInt(dr,10),link_type:g('link')==='nofollow'?'nofollow':'dofollow'});
+      if(r4.error) throw r4.error;
+      ui.busy=false; await reload('Website saved.'); return;
+    }
+  }catch(err){
+    var m = (err && err.message) ? err.message : String(err);
+    if(/invalid login/i.test(m)) m = 'Wrong email or password.';
+    if(k==='register'||k==='signin') ui.err = m; else ui.flash = 'Error: '+m;
+  }
+  ui.busy = false; render();
+});
+
+(async function boot(){
+  try{
+    var r = await sb.auth.getSession();
+    if(r.data && r.data.session){ await enter(r.data.session); return; }
+  }catch(e){}
+  render();
+})();
+</script>
+</body>
+</html>
