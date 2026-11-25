@@ -65,6 +65,16 @@ main{max-width:1200px;margin:0 auto;padding:36px 40px 56px;display:flex;flex-dir
 .sw{width:46px;height:26px;border-radius:999px;border:0;background:var(--b2);padding:3px;display:flex;cursor:pointer;justify-content:flex-start}
 .sw.on{background:var(--g);justify-content:flex-end}
 .sw i{width:20px;height:20px;border-radius:50%;background:#0B0C10;display:block}
+.tb{display:flex;flex-wrap:wrap;gap:6px;padding:8px;background:var(--p2);border:1px solid var(--b2);border-bottom:0;border-radius:10px 10px 0 0}
+.tb button{min-width:40px;height:38px;padding:0 10px;border:1px solid var(--b2);border-radius:8px;background:var(--p);color:var(--t);cursor:pointer;font-weight:600;font-size:14px}
+.tb button:hover{background:#1B1F28}
+.tb button[disabled]{opacity:.35;cursor:not-allowed}
+.tb+textarea{border-radius:0 0 10px 10px}
+.prev{min-height:240px;padding:14px 16px;background:var(--p2);border:1px solid var(--b2);border-radius:0 0 10px 10px;overflow-wrap:anywhere}
+.prev h1,.prev h2,.prev h3{margin:14px 0 8px}.prev p{margin:0 0 12px}.prev img{max-width:100%;border-radius:8px}
+.prev blockquote{margin:8px 0;padding-left:12px;border-left:3px solid var(--g);color:var(--m)}
+.sitebar{display:flex;flex-wrap:wrap;align-items:center;gap:14px 28px;background:var(--p);border:1px solid var(--b);border-radius:16px;padding:16px 20px}
+.pills{display:flex;flex-wrap:wrap;gap:8px}
 @media(max-width:760px){header.top,main{padding-left:18px;padding-right:18px}.hero{padding:32px 22px}.hero h1{font-size:36px}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
 </head>
@@ -84,8 +94,8 @@ var HELP = {
   browser:'Coming soon. For now these articles wait in the queue.',
   manual:'Article waits in a queue. You post it and paste the live link yourself.'
 };
-var ui = {view:'auth', tab:'signin', filter:'all', adminTab:'sites', kind:'hackmd', pick:null, err:'', info:'', flash:'', busy:false};
-var S = {prof:null, sites:[], subs:[], users:[], tokens:[]};
+var ui = {view:'auth', tab:'signin', filter:'all', adminTab:'sites', kind:'hackmd', pick:null, err:'', info:'', flash:'', busy:false, t:'', b:'', prev:false};
+var S = {prof:null, sites:[], subs:[], users:[], tokens:[], tokErr:''};
 
 function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function safeUrl(u){return /^https?:\/\//i.test(u)?u:'';}
@@ -96,8 +106,31 @@ async function api(body){
   if(!ses) throw new Error('Please sign in again.');
   var r = await fetch('/api/pf',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+ses.access_token},body:JSON.stringify(body)});
   var j = {}; try{ j = await r.json(); }catch(e){}
-  if(!r.ok) throw new Error(j.error || ('Server error '+r.status));
+  if(!r.ok) throw new Error(j.error || ('Server error '+r.status+' (the api/pf.js function crashed or is not deployed - open /api/pf in the browser to check)'));
   return j;
+}
+function imgOk(s){return s.images_allowed!==false;}
+function idxOk(s){return s.indexed!==false;}
+function badges(s){
+  return '<div class="pills"><span class="pill '+(s.link_type==='dofollow'?'ok':'')+'">'+(s.link_type==='dofollow'?'Dofollow':'Nofollow')+'</span>'
+   +'<span class="pill '+(imgOk(s)?'ok':'bad')+'">'+(imgOk(s)?'Images allowed':'No images')+'</span>'
+   +'<span class="pill '+(idxOk(s)?'ok':'bad')+'">'+(idxOk(s)?'Indexed':'Not indexed')+'</span></div>';
+}
+function md(src){
+  var lines = esc(src).split('\n'), out = [], list = '';
+  function inl(t){return t.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g,'<img src="$2" alt="$1">').replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>').replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>').replace(/\*([^*]+)\*/g,'<i>$1</i>');}
+  function close(){if(list){out.push('</'+list+'>');list='';}}
+  lines.forEach(function(l){
+    var m;
+    if((m=/^(#{1,3})\s+(.*)$/.exec(l))){close();out.push('<h'+m[1].length+'>'+inl(m[2])+'</h'+m[1].length+'>');}
+    else if((m=/^[-*]\s+(.*)$/.exec(l))){if(list!=='ul'){close();list='ul';out.push('<ul>');}out.push('<li>'+inl(m[1])+'</li>');}
+    else if((m=/^\d+\.\s+(.*)$/.exec(l))){if(list!=='ol'){close();list='ol';out.push('<ol>');}out.push('<li>'+inl(m[1])+'</li>');}
+    else if((m=/^&gt;\s?(.*)$/.exec(l))){close();out.push('<blockquote>'+inl(m[1])+'</blockquote>');}
+    else if(!l.trim()){close();}
+    else {close();out.push('<p>'+inl(l)+'</p>');}
+  });
+  close();
+  return out.join('');
 }
 function isAdmin(){return !!(S.prof && S.prof.is_admin);}
 
@@ -111,11 +144,11 @@ async function loadAll(){
   if(isAdmin()){
     var u = await sb.from('profiles').select('*').order('created_at',{ascending:true});
     if(u.error) throw u.error; S.users = u.data||[];
-    S.tokens = [];
+    S.tokens = []; S.tokErr = '';
     if(S.sites.some(function(x){return x.kind==='hackmd';})){
-      try{ S.tokens = (await api({action:'secrets'})).sites || []; }catch(e){ S.tokens = []; }
+      try{ S.tokens = (await api({action:'secrets'})).sites || []; }catch(e){ S.tokens = []; S.tokErr = String(e.message||e); }
     }
-  } else { S.users = []; S.tokens = []; }
+  } else { S.users = []; S.tokens = []; S.tokErr = ''; }
 }
 
 async function enter(session){
@@ -172,7 +205,7 @@ function vDash(){
   var rows = list.length ? list.map(function(s){
     return '<div class="row"><div class="grow"><b style="font-size:17px">'+esc(s.name)+'</b><div class="mut2">'+esc(KINDS[s.kind])+'</div></div>'
      +'<div style="display:flex;gap:24px"><div><div class="mut2">DA</div><b>'+esc(s.da==null?'-':s.da)+'</b></div><div><div class="mut2">DR</div><b>'+esc(s.dr==null?'-':s.dr)+'</b></div></div>'
-     +'<span class="pill">'+(s.link_type==='dofollow'?'Dofollow':'Nofollow')+'</span>'
+     +badges(s)
      +'<span class="pill '+(isAuto(s)?'gold':'')+'">'+(isAuto(s)?'Auto publish':'Manual queue')+'</span>'
      +'<button class="btn" data-a="pick" data-id="'+esc(s.id)+'">Submit</button></div>';
   }).join('') : '<div class="row mut">No websites yet.'+(isAdmin()?' Add your first one in the Admin tab.':'')+'</div>';
@@ -188,17 +221,26 @@ function vSubmit(){
   if(!ui.pick || !sites.some(function(s){return s.id===ui.pick;})) ui.pick = sites[0].id;
   var cur = sites.filter(function(s){return s.id===ui.pick;})[0];
   var chips = sites.map(function(s){return '<button type="button" class="chip '+(s.id===ui.pick?'on':'')+'" data-a="pick2" data-id="'+esc(s.id)+'">'+esc(s.name)+'</button>';}).join('');
-  return '<h1 style="font-size:34px">Submit an article</h1><p class="mut" style="margin:-14px 0 0">Choose a site and paste your article. Your live link appears in Live Links.</p>'
-   +'<div class="two"><form class="card" data-form="submit" style="flex:999 1 520px;min-width:0">'
+  var ok = imgOk(cur), dis = ok?'':' disabled title="This website does not allow images"';
+  function tb(cmd,label,t){return '<button type="button" data-a="fmt" data-v="'+cmd+'" title="'+t+'">'+label+'</button>';}
+  var bar = ui.prev
+    ? '<div class="tb"><button type="button" data-a="prev">Back to editing</button></div>'
+    : '<div class="tb">'+tb('bold','<b>B</b>','Bold')+tb('italic','<i>I</i>','Italic')+tb('h2','H2','Big heading')+tb('h3','H3','Small heading')+tb('ul','&bull; List','Bullet points')+tb('ol','1. List','Numbered list')+tb('quote','Quote','Quote')+tb('link','Link','Add a link')
+      +'<button type="button" data-a="imgup"'+dis+' title="Upload an image">Image</button><button type="button" data-a="fmt" data-v="img"'+dis+' title="Add an image from a link">Img URL</button>'
+      +'<button type="button" data-a="prev" style="margin-left:auto">Preview</button></div>';
+  var area = ui.prev
+    ? '<div class="prev">'+(ui.b.trim()?md(ui.b):'<span class="mut">Nothing to preview yet.</span>')+'</div>'
+    : '<textarea id="b" name="body" rows="14" placeholder="Write or paste your full article here. Use the buttons above to add links, images, bold text and lists.">'+esc(ui.b)+'</textarea>';
+  return '<h1 style="font-size:34px">Submit an article</h1><p class="mut" style="margin:-14px 0 0">Choose a site and write your article. Your live link appears in Live Links.</p>'
+   +'<div class="sitebar"><div class="grow" style="flex-basis:180px"><div class="mut2" style="text-transform:uppercase;letter-spacing:.06em">Selected site</div><b style="font-size:22px;font-family:\'Space Grotesk\',sans-serif">'+esc(cur.name)+'</b></div>'
+   +'<div><div class="mut2">DA</div><b style="font-size:20px">'+esc(cur.da==null?'-':cur.da)+'</b></div><div><div class="mut2">DR</div><b style="font-size:20px">'+esc(cur.dr==null?'-':cur.dr)+'</b></div>'
+   +badges(cur)+'<span class="pill '+(isAuto(cur)?'gold':'')+'">'+(isAuto(cur)?'Auto publish':'Manual queue')+'</span></div>'
+   +'<form class="card" data-form="submit">'
    +(ui.err?'<p class="err" role="alert">'+esc(ui.err)+'</p>':'')
    +'<div class="fld"><label>1. Choose website</label><div style="display:flex;flex-wrap:wrap;gap:10px">'+chips+'</div></div>'
-   +'<div class="fld"><label for="t">2. Article title</label><input id="t" name="title" required placeholder="Your article title"></div>'
-   +'<div class="fld"><label for="b">3. Paste your article</label><textarea id="b" name="body" rows="10" required placeholder="Paste your full article here, including your link"></textarea></div>'
-   +'<button class="btn lg" type="submit"'+(ui.busy?' disabled':'')+'>'+(ui.busy?'Working...':'Submit Article')+'</button></form>'
-   +'<div class="card" style="flex:1 1 280px;min-width:0"><div class="mut2" style="text-transform:uppercase;letter-spacing:.06em">Selected site</div><h2 style="font-size:24px;margin:8px 0 16px">'+esc(cur.name)+'</h2>'
-   +'<div style="display:flex;justify-content:space-between;margin-bottom:8px"><span class="mut2">Connector</span><span>'+esc(KINDS[cur.kind])+'</span></div>'
-   +'<div style="display:flex;justify-content:space-between;margin-bottom:8px"><span class="mut2">Link type</span><span>'+(cur.link_type==='dofollow'?'Dofollow':'Nofollow')+'</span></div>'
-   +'<div style="display:flex;justify-content:space-between"><span class="mut2">Publishing</span><span style="color:var(--g2)">'+(isAuto(cur)?'Automatic':'Queued for posting')+'</span></div></div></div>';
+   +'<div class="fld"><label for="t">2. Article title</label><input id="t" name="title" required placeholder="Your article title" value="'+esc(ui.t)+'"></div>'
+   +'<div class="fld"><label>3. Write your article'+(ok?'':' <span class="mut2">(this site does not allow images)</span>')+'</label>'+bar+area+'<input type="file" id="imgf" accept="image/jpeg,image/png,image/webp,image/gif" hidden></div>'
+   +'<button class="btn lg" type="submit"'+(ui.busy?' disabled':'')+'>'+(ui.busy?'Working...':'Submit Article')+'</button></form>';
 }
 
 function vLinks(){
@@ -216,7 +258,7 @@ function userName(id){var u=S.users.filter(function(x){return x.id===id;})[0];re
 function tokenRow(s){
   var has = S.tokens.indexOf(s.id)>=0;
   return '<div style="flex:1 1 100%;display:flex;flex-wrap:wrap;gap:8px;align-items:center">'
-   +'<span class="pill '+(has?'ok':'gold')+'">'+(has?'Token saved':'No token yet')+'</span>'
+   +'<span class="pill '+(has?'ok':S.tokErr?'bad':'gold')+'">'+(has?'Token saved':S.tokErr?'Cannot check':'No token yet')+'</span>'
    +'<input id="tok-'+esc(s.id)+'" type="password" autocomplete="off" placeholder="Paste HackMD API token" style="flex:1 1 200px">'
    +'<button class="btn sm" data-a="savetok" data-id="'+esc(s.id)+'">'+(has?'Replace token':'Save token')+'</button></div>';
 }
@@ -233,15 +275,24 @@ function vAdmin(){
        +'<span class="pill '+(s.active?'ok':'')+'">'+(s.active?'ON':'OFF')+'</span>'
        +'<button class="sw '+(s.active?'on':'')+'" data-a="togsite" data-id="'+esc(s.id)+'" aria-label="Toggle '+esc(s.name)+'"><i></i></button>'
        +'<button class="btn sm danger" data-a="delsite" data-id="'+esc(s.id)+'">Remove</button>'
+       +'<div style="flex:1 1 100%;display:flex;flex-wrap:wrap;gap:8px;align-items:center">'
+       +'<button class="btn sm ghost" data-a="tog" data-f="link_type" data-id="'+esc(s.id)+'">'+(s.link_type==='dofollow'?'Dofollow':'Nofollow')+'</button>'
+       +'<button class="btn sm ghost" data-a="tog" data-f="images_allowed" data-id="'+esc(s.id)+'">'+(imgOk(s)?'Images allowed':'No images')+'</button>'
+       +'<button class="btn sm ghost" data-a="tog" data-f="indexed" data-id="'+esc(s.id)+'">'+(idxOk(s)?'Indexed':'Not indexed')+'</button>'
+       +'<input id="da-'+esc(s.id)+'" type="number" min="0" max="100" placeholder="DA" value="'+esc(s.da==null?'':s.da)+'" style="width:76px;height:38px">'
+       +'<input id="dr-'+esc(s.id)+'" type="number" min="0" max="100" placeholder="DR" value="'+esc(s.dr==null?'':s.dr)+'" style="width:76px;height:38px">'
+       +'<button class="btn sm" data-a="metrics" data-id="'+esc(s.id)+'">Save DA/DR</button></div>'
        +(s.kind==='hackmd' ? tokenRow(s) : '')+'</div>';
     }).join('') || '<div class="mut">No websites yet.</div>';
+    var terr = S.tokErr ? '<div class="note" style="margin-bottom:14px;color:var(--bad);border-color:#5A2A2A;background:#241214">The server function did not answer, so token status cannot be checked. Your saved tokens are NOT deleted. Details: '+esc(S.tokErr)+'</div>' : '';
     body = '<div class="two"><form class="card" data-form="addsite" style="flex:1 1 380px;min-width:0"><h2 style="font-size:22px;margin-bottom:18px">Add a website</h2>'
      +'<div class="fld"><label for="sn">Website name</label><input id="sn" name="name" required placeholder="yoursite.com"></div>'
      +'<div class="fld"><label>Connector type</label><div style="display:flex;flex-wrap:wrap;gap:8px">'+kinds+'</div><p class="mut2" style="margin:8px 0 0">'+esc(HELP[ui.kind])+'</p></div>'
      +'<div style="display:flex;gap:12px" class="fld"><div style="flex:1"><label for="sa">DA</label><input id="sa" name="da" type="number" min="0" max="100"></div><div style="flex:1"><label for="sd">DR</label><input id="sd" name="dr" type="number" min="0" max="100"></div><div style="flex:1.3"><label for="sl">Link type</label><select id="sl" name="link"><option value="dofollow">Dofollow</option><option value="nofollow">Nofollow</option></select></div></div>'
+     +'<div style="display:flex;gap:12px" class="fld"><div style="flex:1"><label for="si">Images</label><select id="si" name="img"><option value="yes">Allowed</option><option value="no">Not allowed</option></select></div><div style="flex:1"><label for="sx">Indexing</label><select id="sx" name="idx"><option value="yes">Indexed</option><option value="no">Not indexed</option></select></div></div>'
      +'<div class="note" style="margin-bottom:18px">For HackMD sites, save the site first, then paste its API token in the list on the right. Tokens are stored encrypted on the server and are never shown again.</div>'
      +'<button class="btn lg" type="submit"'+(ui.busy?' disabled':'')+'>Save website</button></form>'
-     +'<div class="card" style="flex:1.4 1 460px;min-width:0"><h2 style="font-size:22px;margin-bottom:16px">Connected websites</h2><div style="display:flex;flex-direction:column;gap:10px">'+list+'</div></div></div>';
+     +'<div class="card" style="flex:1.4 1 460px;min-width:0"><h2 style="font-size:22px;margin-bottom:16px">Connected websites</h2>'+terr+'<div style="display:flex;flex-direction:column;gap:10px">'+list+'</div></div></div>';
   } else if(ui.adminTab==='queue'){
     var qs = S.subs.filter(function(s){return s.status!=='live';});
     body = '<div class="card"><h2 style="font-size:22px;margin-bottom:16px">Articles waiting to be posted</h2><div style="display:flex;flex-direction:column;gap:10px">'
@@ -302,6 +353,20 @@ document.addEventListener('click', async function(e){
       try{ var rr = await api({action:'publish',submission_id:id}); await reload('Published: '+rr.live_url); }
       catch(x){ await reload('Auto-publish failed: '+(x.message||x)); }
     }
+    else if(a==='tog'){
+      var f2=el.dataset.f; if(['link_type','images_allowed','indexed'].indexOf(f2)<0) return;
+      var st2=S.sites.filter(function(x){return x.id===id;})[0]; var upd={};
+      if(f2==='link_type') upd.link_type = st2.link_type==='dofollow'?'nofollow':'dofollow'; else upd[f2] = !(st2[f2]!==false);
+      var r5=await sb.from('sites').update(upd).eq('id',id); if(r5.error) throw r5.error; await reload('Updated.');
+    }
+    else if(a==='metrics'){
+      function num(x){var n=parseInt(x,10);return isNaN(n)?null:Math.max(0,Math.min(100,n));}
+      var di=document.getElementById('da-'+id), ri=document.getElementById('dr-'+id);
+      var r6=await sb.from('sites').update({da:num(di&&di.value),dr:num(ri&&ri.value)}).eq('id',id); if(r6.error) throw r6.error; await reload('DA/DR saved.');
+    }
+    else if(a==='fmt'){ fmt(v); }
+    else if(a==='imgup'){ var fi=document.getElementById('imgf'); if(fi) fi.click(); }
+    else if(a==='prev'){ ui.prev=!ui.prev; render(); }
     else if(a==='setlive'){
       var inp = document.getElementById('q-'+id); var url = inp?safeUrl(inp.value.trim()):'';
       if(!url){ui.flash='Paste a valid link starting with http:// or https://';render();return;}
@@ -332,7 +397,11 @@ document.addEventListener('submit', async function(e){
     } else if(k==='submit'){
       var site = S.sites.filter(function(s){return s.id===ui.pick;})[0];
       if(!site) throw new Error('Choose a website first.');
-      var r3 = await sb.from('submissions').insert({site_id:site.id,site_name:site.name,title:g('title'),body:g('body')}).select('id').single();
+      var bodyTxt = (ui.b||g('body')).trim(), titleTxt = g('title')||ui.t.trim();
+      if(!titleTxt) throw new Error('Write a title first.');
+      if(!bodyTxt) throw new Error('Write your article first.');
+      if(!imgOk(site) && /!\[[^\]]*\]\(/.test(bodyTxt)) throw new Error('This website does not allow images. Remove the image from your article or pick another site.');
+      var r3 = await sb.from('submissions').insert({site_id:site.id,site_name:site.name,title:titleTxt,body:bodyTxt}).select('id').single();
       if(r3.error) throw r3.error;
       var msg;
       if(isAuto(site)){
@@ -340,12 +409,13 @@ document.addEventListener('submit', async function(e){
         try{ await api({action:'publish',submission_id:r3.data.id}); msg='Published. Your live link is ready.'; }
         catch(x){ msg='Saved in the queue, but auto-publish did not finish: '+(x.message||x); }
       } else msg='Submitted. It is in the queue and your link will appear after posting.';
+      ui.t=''; ui.b=''; ui.prev=false;
       ui.busy=false; await loadAll();
       ui.flash = msg;
       go('links'); return;
     } else if(k==='addsite'){
       var da = g('da'), dr = g('dr');
-      var r4 = await sb.from('sites').insert({name:g('name'),kind:ui.kind,da:da===''?null:parseInt(da,10),dr:dr===''?null:parseInt(dr,10),link_type:g('link')==='nofollow'?'nofollow':'dofollow'});
+      var r4 = await sb.from('sites').insert({name:g('name'),kind:ui.kind,da:da===''?null:parseInt(da,10),dr:dr===''?null:parseInt(dr,10),link_type:g('link')==='nofollow'?'nofollow':'dofollow',images_allowed:g('img')!=='no',indexed:g('idx')!=='no'});
       if(r4.error) throw r4.error;
       ui.busy=false; await reload('Website saved.'); return;
     }
@@ -356,6 +426,63 @@ document.addEventListener('submit', async function(e){
   }
   ui.busy = false; render();
 });
+
+document.addEventListener('input', function(e){
+  if(e.target.id==='t') ui.t = e.target.value; else if(e.target.id==='b') ui.b = e.target.value;
+});
+document.addEventListener('change', function(e){
+  if(e.target.id==='imgf'){ var f = e.target.files && e.target.files[0]; e.target.value=''; uploadImage(f); }
+});
+function putText(text){
+  var ta = document.getElementById('b'); if(!ta){ ui.b += text; return; }
+  var s0 = ta.selectionStart, e0 = ta.selectionEnd;
+  ta.value = ta.value.slice(0,s0)+text+ta.value.slice(e0); ui.b = ta.value; ta.focus(); ta.setSelectionRange(s0+text.length, s0+text.length);
+}
+function curSite(){return S.sites.filter(function(x){return x.id===ui.pick;})[0];}
+function fmt(cmd){
+  var ta = document.getElementById('b'); if(!ta) return;
+  var v = ta.value, s0 = ta.selectionStart, e0 = ta.selectionEnd, sel = v.slice(s0,e0);
+  function put(text,a,b){ ta.value = v.slice(0,s0)+text+v.slice(e0); ui.b = ta.value; ta.focus(); ta.setSelectionRange(s0+a,s0+b); }
+  function lines(fn,ph){
+    var ls = s0===0 ? 0 : v.lastIndexOf('\n', s0-1)+1; var nl = v.indexOf('\n', e0); var le = nl<0 ? v.length : nl;
+    var block = v.slice(ls,le) || ph; var out = block.split('\n').map(fn).join('\n');
+    ta.value = v.slice(0,ls)+out+v.slice(le); ui.b = ta.value; ta.focus(); ta.setSelectionRange(ls, ls+out.length);
+  }
+  var strip = function(l){return l.replace(/^(#{1,6}|[-*]|\d+\.|>)\s+/,'');};
+  if(cmd==='bold'){ var t1 = sel||'bold text'; put('**'+t1+'**',2,2+t1.length); }
+  else if(cmd==='italic'){ var t2 = sel||'italic text'; put('*'+t2+'*',1,1+t2.length); }
+  else if(cmd==='h2'){ lines(function(l){return '## '+strip(l);},'Heading'); }
+  else if(cmd==='h3'){ lines(function(l){return '### '+strip(l);},'Heading'); }
+  else if(cmd==='ul'){ lines(function(l){return '- '+strip(l);},'List item'); }
+  else if(cmd==='ol'){ lines(function(l,i){return (i+1)+'. '+strip(l);},'List item'); }
+  else if(cmd==='quote'){ lines(function(l){return '> '+strip(l);},'Quote'); }
+  else if(cmd==='link'){
+    var url = (prompt('Paste the link (must start with https://)')||'').trim();
+    if(!safeUrl(url)){ if(url) alert('The link must start with http:// or https://'); return; }
+    var txt = sel || (prompt('Text to show for this link')||'').trim() || url;
+    put('['+txt.replace(/[\[\]]/g,'')+']('+url+')',0,('['+txt+']('+url+')').length);
+  }
+  else if(cmd==='img'){
+    var site = curSite(); if(site && !imgOk(site)){ alert('This website does not allow images.'); return; }
+    var iu = (prompt('Paste the image link (https://... .jpg / .png)')||'').trim();
+    if(!safeUrl(iu)){ if(iu) alert('The link must start with http:// or https://'); return; }
+    put('\n\n!['+(sel||'image').replace(/[\[\]]/g,'')+']('+iu+')\n\n',0,0);
+  }
+}
+async function uploadImage(file){
+  if(!file) return;
+  var site = curSite(); if(site && !imgOk(site)){ alert('This website does not allow images.'); return; }
+  var ext = {'image/jpeg':'jpg','image/png':'png','image/webp':'webp','image/gif':'gif'}[file.type];
+  if(!ext){ alert('Please choose a JPG, PNG, WEBP or GIF image.'); return; }
+  if(file.size > 5*1024*1024){ alert('This image is too big. Maximum is 5 MB.'); return; }
+  var path = S.prof.id+'/'+Date.now()+'-'+Math.random().toString(36).slice(2,8)+'.'+ext;
+  try{
+    var r = await sb.storage.from('article-images').upload(path, file, {contentType:file.type, cacheControl:'31536000'});
+    if(r.error) throw r.error;
+    var url = sb.storage.from('article-images').getPublicUrl(path).data.publicUrl;
+    putText('\n\n![image]('+url+')\n\n');
+  }catch(err){ alert('Upload failed: '+(err.message||err)+'\nYou can use the "Img URL" button instead.'); }
+}
 
 (async function boot(){
   try{
