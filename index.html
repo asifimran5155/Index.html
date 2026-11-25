@@ -87,9 +87,10 @@ var SB_URL = 'https://cyldveojnpfrkbkgppky.supabase.co';
 var SB_KEY = 'sb_publishable_Fwvj4Kdd2dZYdZztsTy8Yw_aZUtb8v-';
 var sb = supabase.createClient(SB_URL, SB_KEY);
 
-var KINDS = {hackmd:'HackMD (auto)', wordpress:'WordPress', webhook:'Custom webhook', browser:'Browser login', manual:'Manual queue'};
+var KINDS = {hackmd:'HackMD (auto)', telegraph:'Telegra.ph (auto)', wordpress:'WordPress', webhook:'Custom webhook', browser:'Browser login', manual:'Manual queue'};
 var HELP = {
   hackmd:'Publishes automatically through the HackMD API. After saving the site, add its API token below.',
+  telegraph:'Publishes automatically to Telegra.ph. No login or token needed: the server creates the account itself.',
   wordpress:'Coming soon. For now these articles wait in the queue.',
   webhook:'Coming soon. For now these articles wait in the queue.',
   browser:'Coming soon. For now these articles wait in the queue.',
@@ -101,7 +102,7 @@ var S = {prof:null, sites:[], subs:[], users:[], tokens:[], tokErr:''};
 function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function safeUrl(u){return /^https?:\/\//i.test(u)?u:'';}
 function fdate(s){try{return new Date(s).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});}catch(e){return '';}}
-function isAuto(s){return s.kind==='hackmd';}
+function isAuto(s){return s.kind==='hackmd'||s.kind==='telegraph';}
 async function api(body){
   var ses = (await sb.auth.getSession()).data.session;
   if(!ses) throw new Error('Please sign in again.');
@@ -286,20 +287,24 @@ function vAdmin(){
        +(s.kind==='hackmd' ? tokenRow(s) : '')+'</div>';
     }).join('') || '<div class="mut">No websites yet.</div>';
     var terr = S.tokErr ? '<div class="note" style="margin-bottom:14px;color:var(--bad);border-color:#F3B8B1;background:#FDECEA">The server function did not answer, so token status cannot be checked. Your saved tokens are NOT deleted. Details: '+esc(S.tokErr)+'</div>' : '';
-    body = '<div class="two"><form class="card" data-form="addsite" style="flex:1 1 380px;min-width:0"><h2 style="font-size:22px;margin-bottom:18px">Add a website</h2>'
+    body = '<div class="two"><div style="flex:1 1 380px;min-width:0;display:flex;flex-direction:column;gap:24px"><form class="card" data-form="addsite"><h2 style="font-size:22px;margin-bottom:18px">Add a website</h2>'
      +'<div class="fld"><label for="sn">Website name</label><input id="sn" name="name" required placeholder="yoursite.com"></div>'
      +'<div class="fld"><label>Connector type</label><div style="display:flex;flex-wrap:wrap;gap:8px">'+kinds+'</div><p class="mut2" style="margin:8px 0 0">'+esc(HELP[ui.kind])+'</p></div>'
      +'<div style="display:flex;gap:12px" class="fld"><div style="flex:1"><label for="sa">DA</label><input id="sa" name="da" type="number" min="0" max="100"></div><div style="flex:1"><label for="sd">DR</label><input id="sd" name="dr" type="number" min="0" max="100"></div><div style="flex:1.3"><label for="sl">Link type</label><select id="sl" name="link"><option value="dofollow">Dofollow</option><option value="nofollow">Nofollow</option></select></div></div>'
      +'<div style="display:flex;gap:12px" class="fld"><div style="flex:1"><label for="si">Images</label><select id="si" name="img"><option value="yes">Allowed</option><option value="no">Not allowed</option></select></div><div style="flex:1"><label for="sx">Indexing</label><select id="sx" name="idx"><option value="yes">Indexed</option><option value="no">Not indexed</option></select></div></div>'
      +'<div class="note" style="margin-bottom:18px">For HackMD sites, save the site first, then paste its API token in the list on the right. Tokens are stored encrypted on the server and are never shown again.</div>'
      +'<button class="btn lg" type="submit"'+(ui.busy?' disabled':'')+'>Save website</button></form>'
+     +'<div class="card"><h2 style="font-size:22px;margin-bottom:8px">Import from Google Sheet</h2><p class="mut2" style="margin:0 0 14px">Columns in row 1: name, kind, da, dr, link_type, images, indexed. Only name is required. Existing sites (same name) are updated, new ones are added. The sheet must be public: Share &gt; Anyone with the link &gt; Viewer.</p>'
+     +'<div class="fld"><label for="shu">Google Sheet link</label><input id="shu" placeholder="https://docs.google.com/spreadsheets/d/..."></div>'
+     +'<div class="fld"><label for="shc">Or paste rows (CSV)</label><textarea id="shc" rows="4" placeholder="name,kind,da,dr&#10;example.com,manual,40,35"></textarea></div>'
+     +'<button class="btn lg" type="button" data-a="import"'+(ui.busy?' disabled':'')+'>Import sites</button></div></div>'
      +'<div class="card" style="flex:1.4 1 460px;min-width:0"><h2 style="font-size:22px;margin-bottom:16px">Connected websites</h2>'+terr+'<div style="display:flex;flex-direction:column;gap:10px">'+list+'</div></div></div>';
   } else if(ui.adminTab==='queue'){
     var qs = S.subs.filter(function(s){return s.status!=='live';});
     body = '<div class="card"><h2 style="font-size:22px;margin-bottom:16px">Articles waiting to be posted</h2><div style="display:flex;flex-direction:column;gap:10px">'
      +(qs.length ? qs.map(function(s){
        return '<div class="row in"><div class="grow" style="flex-basis:220px"><b>'+esc(s.title)+'</b><div class="mut2">'+esc(s.site_name)+' · '+esc(userName(s.user_id))+' · '+esc(fdate(s.created_at))+'</div></div>'
-        +(function(){var ss=S.sites.filter(function(x){return x.id===s.site_id;})[0];return ss&&ss.kind==='hackmd'?'<button class="btn sm ghost" data-a="retry" data-id="'+esc(s.id)+'">Auto-publish now</button>':'';})()
+        +(function(){var ss=S.sites.filter(function(x){return x.id===s.site_id;})[0];return ss&&isAuto(ss)?'<button class="btn sm ghost" data-a="retry" data-id="'+esc(s.id)+'">Auto-publish now</button>':'';})()
         +(s.status==='failed'&&s.error?'<div class="mut2" style="flex:1 1 100%;color:var(--bad)">'+esc(s.error)+'</div>':'')
         +'<button class="btn sm ghost" data-a="copyart" data-id="'+esc(s.id)+'">Copy article</button>'
         +'<input id="q-'+esc(s.id)+'" placeholder="Paste live link (https://...)" style="flex:1 1 220px">'
@@ -353,6 +358,13 @@ document.addEventListener('click', async function(e){
       el.disabled = true; ui.flash='Publishing...'; render();
       try{ var rr = await api({action:'publish',submission_id:id}); await reload('Published: '+rr.live_url); }
       catch(x){ await reload('Auto-publish failed: '+(x.message||x)); }
+    }
+    else if(a==='import'){
+      var su=(document.getElementById('shu').value||'').trim(), sc=(document.getElementById('shc').value||'').trim();
+      if(!su&&!sc){ui.flash='Paste a Google Sheet link or some CSV rows first.';render();return;}
+      el.disabled=true; el.textContent='Importing...';
+      var ir=await api(sc?{action:'import-sheet',csv:sc}:{action:'import-sheet',url:su});
+      await reload('Import done: '+ir.added+' added, '+ir.updated+' updated, '+ir.skipped+' skipped.');
     }
     else if(a==='tog'){
       var f2=el.dataset.f; if(['link_type','images_allowed','indexed'].indexOf(f2)<0) return;
