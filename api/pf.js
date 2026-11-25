@@ -27,318 +27,169 @@ function env() {
 }
 
 class HttpError extends Error {
-  constructor(code, message) {
-    super(message);
-    this.code = code;
-  }
+  constructor(code, message) { super(message); this.code = code; }
 }
 
-function encryptText(plainText, keyBuf) {
+function encrypt(text, key) {
   const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', keyBuf, iv);
-  const enc = Buffer.concat([cipher.update(String(plainText), 'utf8'), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return [iv.toString('hex'), tag.toString('hex'), enc.toString('hex')].join(':');
+  const c = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const ct = Buffer.concat([c.update(text, 'utf8'), c.final()]);
+  return 'v1:' + iv.toString('base64') + ':' + c.getAuthTag().toString('base64') + ':' + ct.toString('base64');
 }
 
-function decryptText(payload, keyBuf) {
-  const parts = String(payload || '').split(':');
-  if (parts.length !== 3) throw new HttpError(500, 'Stored token format is invalid.');
-  const iv = Buffer.from(parts[0], 'hex');
-  const tag = Buffer.from(parts[1], 'hex');
-  const data = Buffer.from(parts[2], 'hex');
-  const decipher = crypto.createDecipheriv('aes-256-gcm', keyBuf, iv);
-  decipher.setAuthTag(tag);
-  const dec = Buffer.concat([decipher.update(data), decipher.final()]);
-  return dec.toString('utf8');
+function decrypt(blob, key) {
+  const p = String(blob || '').split(':');
+  if (p.length !== 4 || p[0] !== 'v1') throw new Error('bad format');
+  const d = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(p[1], 'base64'));
+  d.setAuthTag(Buffer.from(p[2], 'base64'));
+  return Buffer.concat([d.update(Buffer.from(p[3], 'base64')), d.final()]).toString('utf8');
 }
 
-async function readJsonBody(req) {
-  if (req.body && typeof req.body === 'object') return req.body;
-  const chunks = [];
-  for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  const raw = Buffer.concat(chunks).toString('utf8').trim();
-  if (!raw) return {};
-  try {
-    return JSON.parse(raw);
-  } catch (e) {
-    throw new HttpError(400, 'Invalid JSON request body.');
-  }
+async function timed(url, opts, ms) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), ms || 20000);
+  try { return await fetch(url, Object.assign({}, opts, { signal: ctl.signal })); }
+  finally { clearTimeout(t); }
 }
 
-function extractBearerToken(req) {
-  const auth = req.headers['authorization'] || req.headers['Authorization'] || '';
-  const m = String(auth).match(/^Bearer\s+(.+)$/i);
-  return m ? m[1].trim() : '';
+async function db(E, path, method, body, prefer) {
+  const headers = { apikey: E.secret, 'Content-Type': 'application/json' };
+  if (prefer) headers.Prefer = prefer;
+  const r = await timed(E.url + '/rest/v1/' + path, { method: method || 'GET', headers, body: body ? JSON.stringify(body) : undefined });
+  const txt = await r.text();
+  if (!r.ok) throw new HttpError(500, 'Database error (' + r.status + ')');
+  return txt ? JSON.parse(txt) : [];
 }
 
-async function getAuthedUser(req, cfg) {
-  const bearer = extractBearerToken(req);
-  if (!bearer) throw new HttpError(401, 'Missing authorization token.');
-
-  const resp = await fetch(`${cfg.url}/auth/v1/user`, {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${bearer}`,
-      apikey: PUB_KEY
-    }
-  });
-
-  if (!resp.ok) {
-    throw new HttpError(401, 'Invalid or expired session token.');
-  }
-  const data = await resp.json();
-  if (!data || !data.id || !UUID.test(data.id)) {
-    throw new HttpError(401, 'Could not verify authenticated user.');
-  }
-  return data;
+async function whoIs(E, jwt) {
+  const r = await timed(E.url + '/auth/v1/user', { headers: { apikey: PUB_KEY, Authorization: 'Bearer ' + jwt } });
+  if (!r.ok) return null;
+  const u = await r.json();
+  return u && UUID.test(u.id || '') ? u : null;
 }
 
-async function sbRest(cfg, path, options = {}) {
-  const method = options.method || 'GET';
-  const headers = Object.assign(
-    {
-      apikey: cfg.secret,
-      Authorization: `Bearer ${cfg.secret}`,
-      'Content-Type': 'application/json'
-    },
-    options.headers || {}
-  );
-
-  const resp = await fetch(`${cfg.url}/rest/v1/${path}`, {
-    method,
-    headers,
-    body: options.body != null ? JSON.stringify(options.body) : undefined
-  });
-
-  const text = await resp.text();
-  let json = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch (e) {
-    json = null;
-  }
-
-  if (!resp.ok) {
-    const msg = (json && (json.message || json.error_description || json.hint)) || text || `Supabase REST error (${resp.status})`;
-    throw new HttpError(500, `Database error: ${msg}`);
-  }
-  return json;
+function noteContent(title, body) {
+  const b = String(body || '').trim();
+  return /^#\s/.test(b) ? b : '# ' + title + '\n\n' + b;
 }
 
-function slugify(str) {
-  return String(str || 'untitled-article')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 70) || 'untitled-article';
+function makeSlug(title) {
+  return String(title || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60).replace(/-+$/, '');
 }
 
-function buildHackmdUrl(noteData, title) {
-  if (noteData && typeof noteData.publishLink === 'string' && /^https?:\/\//i.test(noteData.publishLink)) {
-    return noteData.publishLink.trim();
-  }
-  if (noteData && typeof noteData.shortPath === 'string' && noteData.shortPath.trim()) {
-    return `https://hackmd.io/s/${noteData.shortPath.replace(/^\/+/, '')}`;
-  }
-  const noteId = noteData && (noteData.id || noteData.noteId);
-  if (noteId) {
-    return `https://hackmd.io/${encodeURIComponent(noteId)}/${slugify(title)}`;
-  }
-  throw new HttpError(502, 'HackMD response did not include a note URL or ID.');
-}
-
-async function getSavedHackmdToken(cfg, userId) {
-  // Expects table `provider_tokens` with columns: user_id, provider, encrypted_token, updated_at
-  const rows = await sbRest(
-    cfg,
-    `provider_tokens?user_id=eq.${encodeURIComponent(userId)}&provider=eq.hackmd&select=encrypted_token,updated_at&limit=1`
-  );
-  if (!Array.isArray(rows) || !rows.length || !rows[0].encrypted_token) {
-    return null;
-  }
-  return {
-    token: decryptText(rows[0].encrypted_token, cfg.key),
-    updated_at: rows[0].updated_at || null
-  };
-}
-
-async function saveHackmdToken(cfg, userId, plainToken) {
-  const clean = String(plainToken || '').trim();
-  if (!clean || clean.length < 10) {
-    throw new HttpError(400, 'Please enter a valid HackMD API token.');
-  }
-
-  // Verify token against HackMD API before saving
-  const checkResp = await fetch(`${HACKMD}/me`, {
-    method: 'GET',
-    headers: { Authorization: `Bearer ${clean}` }
-  });
-  if (!checkResp.ok) {
-    throw new HttpError(400, 'HackMD rejected this API token. Check that it is valid and active.');
-  }
-
-  const encrypted = encryptText(clean, cfg.key);
-  const now = new Date().toISOString();
-
-  await sbRest(cfg, 'provider_tokens?on_conflict=user_id,provider', {
+async function postNote(token, content, permalink) {
+  const payload = { content, readPermission: 'guest', writePermission: 'owner' };
+  if (permalink) payload.permalink = permalink;
+  const r = await timed(HACKMD + '/notes', {
     method: 'POST',
-    headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
-    body: {
-      user_id: userId,
-      provider: 'hackmd',
-      encrypted_token: encrypted,
-      updated_at: now
-    }
-  });
-
-  return { connected: true, updated_at: now };
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }, 20000);
+  return { r, txt: await r.text() };
 }
 
-async function publishToHackmd(hackmdToken, title, bodyText) {
-  const cleanTitle = String(title || '').trim() || 'Untitled Article';
-  const cleanBody = String(bodyText || '').trim();
-  if (!cleanBody) {
-    throw new HttpError(400, 'Article content cannot be empty.');
+async function publishToHackmd(token, title, body) {
+  const content = noteContent(title, body);
+  const slug = makeSlug(title);
+  // Try a title-based link first, then the same with a short random suffix, then HackMD's default link.
+  const tries = slug ? [slug, slug + '-' + crypto.randomBytes(2).toString('hex'), ''] : [''];
+  let last = null;
+  for (const p of tries) {
+    const { r, txt } = await postNote(token, content, p);
+    if (r.ok) {
+      let j = {};
+      try { j = JSON.parse(txt); } catch (e) {}
+      const link = j.publishLink || (j.id ? 'https://hackmd.io/' + j.id : '');
+      if (!/^https:\/\//i.test(link)) throw new Error('HackMD did not return a link');
+      return link;
+    }
+    last = { status: r.status, txt };
+    if (![400, 409, 422].includes(r.status)) break;
+  }
+  const msg = last.status === 401 ? 'token rejected' : last.txt.replace(/\s+/g, ' ').slice(0, 120);
+  throw new Error('HackMD ' + last.status + ': ' + msg);
+}
+
+async function handle(req, res) {
+  if (req.method === 'GET') {
+    // Health check: open /api/pf in the browser. Shows only yes/no, never any secret value.
+    const enc = process.env.ENCRYPTION_KEY || '';
+    return out(res, 200, { ok: true, service: 'publishflow', version: 3, has_url: !!process.env.SUPABASE_URL, has_secret_key: !!process.env.SUPABASE_SECRET_KEY, has_encryption_key: /^[0-9a-f]{64}$/i.test(enc) });
+  }
+  if (req.method !== 'POST') throw new HttpError(405, 'POST only');
+  const E = env();
+  const jwt = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (!jwt) throw new HttpError(401, 'Please sign in again');
+  const user = await whoIs(E, jwt);
+  if (!user) throw new HttpError(401, 'Please sign in again');
+  const profs = await db(E, 'profiles?id=eq.' + user.id + '&select=is_admin,active');
+  const prof = profs[0];
+  if (!prof || !prof.active) throw new HttpError(403, 'Account is off');
+
+  let body = req.body;
+  if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = {}; } }
+  body = body || {};
+  const action = body.action;
+
+  if (action === 'secrets') {
+    if (!prof.is_admin) throw new HttpError(403, 'Admins only');
+    const rows = await db(E, 'site_secrets?select=site_id,secret');
+    return out(res, 200, { sites: rows.filter(r => r.secret).map(r => r.site_id) });
   }
 
-  const markdownContent = cleanBody.startsWith('#')
-    ? cleanBody
-    : `# ${cleanTitle}\n\n${cleanBody}`;
+  if (action === 'save-secret') {
+    if (!prof.is_admin) throw new HttpError(403, 'Admins only');
+    const siteId = String(body.site_id || '');
+    const token = String(body.token || '').trim();
+    if (!UUID.test(siteId)) throw new HttpError(400, 'Bad site');
+    if (token.length < 10 || token.length > 500) throw new HttpError(400, 'Token looks wrong');
+    const sites = await db(E, 'sites?id=eq.' + siteId + '&select=id,kind');
+    if (!sites[0]) throw new HttpError(404, 'Site not found');
+    if (sites[0].kind !== 'hackmd') throw new HttpError(400, 'This site is not a HackMD site');
+    await db(E, 'site_secrets?on_conflict=site_id', 'POST', { site_id: siteId, secret: encrypt(token, E.key) }, 'resolution=merge-duplicates');
+    return out(res, 200, { ok: true });
+  }
 
-  const resp = await fetch(`${HACKMD}/notes`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${hackmdToken}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      title: cleanTitle,
-      content: markdownContent,
-      readPermission: 'guest',
-      writePermission: 'owner',
-      commentPermission: 'everyone'
-    })
-  });
+  if (action === 'publish') {
+    const subId = String(body.submission_id || '');
+    if (!UUID.test(subId)) throw new HttpError(400, 'Bad submission');
+    const subs = await db(E, 'submissions?id=eq.' + subId + '&select=id,user_id,site_id,title,body,status');
+    const sub = subs[0];
+    if (!sub) throw new HttpError(404, 'Article not found');
+    if (sub.user_id !== user.id && !prof.is_admin) throw new HttpError(403, 'Not your article');
+    if (!sub.site_id) throw new HttpError(400, 'Site was removed');
+    const sites = await db(E, 'sites?id=eq.' + sub.site_id + '&select=id,kind');
+    if (!sites[0] || sites[0].kind !== 'hackmd') throw new HttpError(400, 'This site is not set for auto-publish');
+    const secs = await db(E, 'site_secrets?site_id=eq.' + sub.site_id + '&select=secret');
+    if (!secs[0] || !secs[0].secret) throw new HttpError(400, 'Token is not set for this site yet. The article stays in the queue.');
 
-  const text = await resp.text();
-  let data = null;
+    const allowed = prof.is_admin ? 'in.(queued,failed,publishing)' : 'eq.queued';
+    const claimed = await db(E, 'submissions?id=eq.' + subId + '&status=' + allowed, 'PATCH', { status: 'publishing', error: null }, 'return=representation');
+    if (!claimed.length) throw new HttpError(409, 'This article was already processed');
+
+    try {
+      const token = decrypt(secs[0].secret, E.key);
+      const link = await publishToHackmd(token, sub.title, sub.body);
+      await db(E, 'submissions?id=eq.' + subId, 'PATCH', { status: 'live', live_url: link, error: null });
+      return out(res, 200, { ok: true, live_url: link });
+    } catch (e) {
+      const msg = String(e && e.message ? e.message : e).slice(0, 200);
+      await db(E, 'submissions?id=eq.' + subId, 'PATCH', { status: 'failed', error: msg });
+      return out(res, 502, { error: msg });
+    }
+  }
+
+  throw new HttpError(400, 'Unknown action');
+}
+
+module.exports = async (req, res) => {
   try {
-    data = text ? JSON.parse(text) : null;
+    await handle(req, res);
   } catch (e) {
-    data = null;
-  }
-
-  if (!resp.ok) {
-    const errMsg = (data && (data.message || data.error)) || text || `HackMD error (${resp.status})`;
-    throw new HttpError(resp.status >= 400 && resp.status < 600 ? resp.status : 502, `HackMD publish failed: ${errMsg}`);
-  }
-
-  return buildHackmdUrl(data, cleanTitle);
-}
-
-module.exports = async function handler(req, res) {
-  if (req.method === 'OPTIONS') {
-    res.statusCode = 204;
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    return res.end();
-  }
-
-  if (req.method !== 'POST') {
-    return out(res, 405, { error: 'Method not allowed. Use POST.' });
-  }
-
-  let submissionId = '';
-  let cfg = null;
-
-  try {
-    cfg = env();
-    const user = await getAuthedUser(req, cfg);
-    const input = await readJsonBody(req);
-    const action = String(input.action || (input.submission_id || input.submissionId ? 'publish' : 'status')).trim();
-
-    if (action === 'status') {
-      const saved = await getSavedHackmdToken(cfg, user.id);
-      return out(res, 200, {
-        ok: true,
-        connected: !!saved,
-        updated_at: saved ? saved.updated_at : null
-      });
-    }
-
-    if (action === 'save_token') {
-      const tokenVal = input.token || input.api_token || input.hackmd_token || '';
-      const result = await saveHackmdToken(cfg, user.id, tokenVal);
-      return out(res, 200, Object.assign({ ok: true }, result));
-    }
-
-    if (action === 'publish') {
-      submissionId = String(input.submission_id || input.submissionId || '').trim();
-      let title = String(input.title || '').trim();
-      let body = String(input.body || input.content || '').trim();
-
-      if (submissionId) {
-        if (!UUID.test(submissionId)) {
-          throw new HttpError(400, 'Invalid submission ID.');
-        }
-        const rows = await sbRest(
-          cfg,
-          `submissions?id=eq.${encodeURIComponent(submissionId)}&limit=1`
-        );
-        if (!Array.isArray(rows) || !rows.length) {
-          throw new HttpError(404, 'Submission not found.');
-        }
-        const sub = rows[0];
-        if (!title) title = sub.title || '';
-        if (!body) body = sub.body || sub.content || '';
-      }
-
-      const saved = await getSavedHackmdToken(cfg, user.id);
-      const tokenToUse = saved ? saved.token : (process.env.HACKMD_API_TOKEN || '').trim();
-      if (!tokenToUse) {
-        throw new HttpError(400, 'HackMD API token is not saved yet.');
-      }
-
-      const liveUrl = await publishToHackmd(tokenToUse, title, body);
-
-      if (submissionId && UUID.test(submissionId)) {
-        await sbRest(cfg, `submissions?id=eq.${encodeURIComponent(submissionId)}`, {
-          method: 'PATCH',
-          headers: { Prefer: 'return=representation' },
-          body: {
-            status: 'live',
-            live_url: liveUrl
-          }
-        });
-      }
-
-      return out(res, 200, {
-        ok: true,
-        status: 'live',
-        live_url: liveUrl
-      });
-    }
-
-    throw new HttpError(400, `Unknown action: ${action}`);
-  } catch (err) {
-    const code = err && typeof err.code === 'number' ? err.code : 500;
-    const message = (err && err.message) || 'Internal server error';
-
-    if (cfg && submissionId && UUID.test(submissionId)) {
-      try {
-        await sbRest(cfg, `submissions?id=eq.${encodeURIComponent(submissionId)}`, {
-          method: 'PATCH',
-          body: { status: 'failed' }
-        });
-      } catch (_) {
-        // Ignore secondary status update error
-      }
-    }
-
-    return out(res, code, { error: message });
+    if (e instanceof HttpError) return out(res, e.code, { error: e.message });
+    return out(res, 500, { error: 'Server error: ' + String(e && e.message ? e.message : e).slice(0, 120) });
   }
 };
+
+module.exports._test = { encrypt, decrypt, noteContent, makeSlug };
