@@ -57,7 +57,10 @@ async function db(E, path, method, body, prefer) {
   if (prefer) headers.Prefer = prefer;
   const r = await timed(E.url + '/rest/v1/' + path, { method: method || 'GET', headers, body: body ? JSON.stringify(body) : undefined });
   const txt = await r.text();
-  if (!r.ok) throw new HttpError(500, 'Database error (' + r.status + ')');
+  if (!r.ok) {
+    let why = ''; try { why = JSON.parse(txt).message || ''; } catch (e) {}
+    throw new HttpError(500, 'Database error (' + r.status + ')' + (why ? ': ' + String(why).slice(0, 120) : ''));
+  }
   return txt ? JSON.parse(txt) : [];
 }
 
@@ -277,7 +280,8 @@ async function importSheet(E, body) {
   existing.forEach(x => { byName[String(x.name).toLowerCase()] = x.id; });
   const toAdd = [], toUpd = [];
   parsed.list.forEach(o => { if (byName[o.name]) toUpd.push({ id: byName[o.name], o }); else toAdd.push(o); });
-  const added = toAdd.map(o => Object.assign({ kind: 'manual' }, o));
+  // Every row must carry the same columns: PostgREST turns missing keys into NULL, which breaks NOT NULL columns.
+  const added = toAdd.map(o => Object.assign({ kind: 'manual', da: null, dr: null, link_type: 'dofollow', images_allowed: true, indexed: true }, o));
   for (let i = 0; i < added.length; i += 100) await db(E, 'sites', 'POST', added.slice(i, i + 100), 'return=minimal');
   let updated = 0;
   for (let i = 0; i < toUpd.length; i += 10) {
