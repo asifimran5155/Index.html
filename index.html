@@ -87,11 +87,11 @@ var SB_URL = 'https://cyldveojnpfrkbkgppky.supabase.co';
 var SB_KEY = 'sb_publishable_Fwvj4Kdd2dZYdZztsTy8Yw_aZUtb8v-';
 var sb = supabase.createClient(SB_URL, SB_KEY);
 
-var KINDS = {hackmd:'HackMD (auto)', telegraph:'Telegra.ph (auto)', wordpress:'WordPress', webhook:'Custom webhook', browser:'Browser login', manual:'Manual queue'};
+var KINDS = {hackmd:'HackMD (auto)', telegraph:'Telegra.ph (auto)', wordpress:'WordPress (auto)', webhook:'Custom webhook', browser:'Browser login', manual:'Manual queue'};
 var HELP = {
   hackmd:'Publishes automatically through the HackMD API. After saving the site, add its API token below.',
   telegraph:'Publishes automatically to Telegra.ph. No login or token needed: the server creates the account itself.',
-  wordpress:'Coming soon. For now these articles wait in the queue.',
+  wordpress:'Publishes through the WordPress REST API. Site name must be the plain domain (example.com). After saving, add the WordPress username and an Application Password. Until then articles wait in the queue.',
   webhook:'Coming soon. For now these articles wait in the queue.',
   browser:'Coming soon. For now these articles wait in the queue.',
   manual:'Article waits in a queue. You post it and paste the live link yourself.'
@@ -102,7 +102,8 @@ var S = {prof:null, sites:[], subs:[], users:[], tokens:[], tokErr:''};
 function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function safeUrl(u){return /^https?:\/\//i.test(u)?u:'';}
 function fdate(s){try{return new Date(s).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});}catch(e){return '';}}
-function isAuto(s){return s.kind==='hackmd'||s.kind==='telegraph';}
+function needsLogin(s){return s.kind==='hackmd'||s.kind==='wordpress';}
+function isAuto(s){return s.kind==='telegraph'||(needsLogin(s)&&S.tokens.indexOf(s.id)>=0);}
 async function api(body){
   var ses = (await sb.auth.getSession()).data.session;
   if(!ses) throw new Error('Please sign in again.');
@@ -143,14 +144,14 @@ async function loadAll(){
   if(r.error) throw r.error; S.sites = r.data||[];
   var s = await sb.from('submissions').select('*').order('created_at',{ascending:false});
   if(s.error) throw s.error; S.subs = s.data||[];
+  S.tokens = []; S.tokErr = '';
+  if(S.sites.some(needsLogin)){
+    try{ S.tokens = (await api({action:'ready'})).sites || []; }catch(e){ S.tokens = []; S.tokErr = String(e.message||e); }
+  }
   if(isAdmin()){
     var u = await sb.from('profiles').select('*').order('created_at',{ascending:true});
     if(u.error) throw u.error; S.users = u.data||[];
-    S.tokens = []; S.tokErr = '';
-    if(S.sites.some(function(x){return x.kind==='hackmd';})){
-      try{ S.tokens = (await api({action:'secrets'})).sites || []; }catch(e){ S.tokens = []; S.tokErr = String(e.message||e); }
-    }
-  } else { S.users = []; S.tokens = []; S.tokErr = ''; }
+  } else { S.users = []; }
 }
 
 async function enter(session){
@@ -258,11 +259,12 @@ function vLinks(){
 function userName(id){var u=S.users.filter(function(x){return x.id===id;})[0];return u?(u.name||u.email):'user';}
 
 function tokenRow(s){
-  var has = S.tokens.indexOf(s.id)>=0;
+  var has = S.tokens.indexOf(s.id)>=0, wp = s.kind==='wordpress';
   return '<div style="flex:1 1 100%;display:flex;flex-wrap:wrap;gap:8px;align-items:center">'
-   +'<span class="pill '+(has?'ok':S.tokErr?'bad':'gold')+'">'+(has?'Token saved':S.tokErr?'Cannot check':'No token yet')+'</span>'
-   +'<input id="tok-'+esc(s.id)+'" type="password" autocomplete="off" placeholder="Paste HackMD API token" style="flex:1 1 200px">'
-   +'<button class="btn sm" data-a="savetok" data-id="'+esc(s.id)+'">'+(has?'Replace token':'Save token')+'</button></div>';
+   +'<span class="pill '+(has?'ok':S.tokErr?'bad':'gold')+'">'+(has?(wp?'Login saved':'Token saved'):S.tokErr?'Cannot check':(wp?'No login yet':'No token yet'))+'</span>'
+   +(wp?'<input id="wu-'+esc(s.id)+'" autocomplete="off" placeholder="WordPress username" style="flex:1 1 150px">':'')
+   +'<input id="tok-'+esc(s.id)+'" type="password" autocomplete="off" placeholder="'+(wp?'Application Password':'Paste HackMD API token')+'" style="flex:1 1 200px">'
+   +'<button class="btn sm" data-a="savetok" data-id="'+esc(s.id)+'">'+(has?(wp?'Replace login':'Replace token'):(wp?'Save login':'Save token'))+'</button></div>';
 }
 
 function vAdmin(){
@@ -284,7 +286,7 @@ function vAdmin(){
        +'<input id="da-'+esc(s.id)+'" type="number" min="0" max="100" placeholder="DA" value="'+esc(s.da==null?'':s.da)+'" style="width:76px;height:38px">'
        +'<input id="dr-'+esc(s.id)+'" type="number" min="0" max="100" placeholder="DR" value="'+esc(s.dr==null?'':s.dr)+'" style="width:76px;height:38px">'
        +'<button class="btn sm" data-a="metrics" data-id="'+esc(s.id)+'">Save DA/DR</button></div>'
-       +(s.kind==='hackmd' ? tokenRow(s) : '')+'</div>';
+       +(needsLogin(s) ? tokenRow(s) : '')+'</div>';
     }).join('') || '<div class="mut">No websites yet.</div>';
     var terr = S.tokErr ? '<div class="note" style="margin-bottom:14px;color:var(--bad);border-color:#F3B8B1;background:#FDECEA">The server function did not answer, so token status cannot be checked. Your saved tokens are NOT deleted. Details: '+esc(S.tokErr)+'</div>' : '';
     body = '<div class="two"><div style="flex:1 1 380px;min-width:0;display:flex;flex-direction:column;gap:24px"><form class="card" data-form="addsite"><h2 style="font-size:22px;margin-bottom:18px">Add a website</h2>'
@@ -292,7 +294,7 @@ function vAdmin(){
      +'<div class="fld"><label>Connector type</label><div style="display:flex;flex-wrap:wrap;gap:8px">'+kinds+'</div><p class="mut2" style="margin:8px 0 0">'+esc(HELP[ui.kind])+'</p></div>'
      +'<div style="display:flex;gap:12px" class="fld"><div style="flex:1"><label for="sa">DA</label><input id="sa" name="da" type="number" min="0" max="100"></div><div style="flex:1"><label for="sd">DR</label><input id="sd" name="dr" type="number" min="0" max="100"></div><div style="flex:1.3"><label for="sl">Link type</label><select id="sl" name="link"><option value="dofollow">Dofollow</option><option value="nofollow">Nofollow</option></select></div></div>'
      +'<div style="display:flex;gap:12px" class="fld"><div style="flex:1"><label for="si">Images</label><select id="si" name="img"><option value="yes">Allowed</option><option value="no">Not allowed</option></select></div><div style="flex:1"><label for="sx">Indexing</label><select id="sx" name="idx"><option value="yes">Indexed</option><option value="no">Not indexed</option></select></div></div>'
-     +'<div class="note" style="margin-bottom:18px">For HackMD sites, save the site first, then paste its API token in the list on the right. Tokens are stored encrypted on the server and are never shown again.</div>'
+     +'<div class="note" style="margin-bottom:18px">For HackMD and WordPress sites, save the site first, then add its token or login in the list. Logins are stored encrypted on the server and are never shown again. Telegra.ph needs nothing.</div>'
      +'<button class="btn lg" type="submit"'+(ui.busy?' disabled':'')+'>Save website</button></form>'
      +'<div class="card"><h2 style="font-size:22px;margin-bottom:8px">Import from Google Sheet</h2><p class="mut2" style="margin:0 0 14px">Columns in row 1: name, kind, da, dr, link_type, images, indexed. Only name is required. Existing sites (same name) are updated, new ones are added. The sheet must be public: Share &gt; Anyone with the link &gt; Viewer.</p>'
      +'<div class="fld"><label for="shu">Google Sheet link</label><input id="shu" placeholder="https://docs.google.com/spreadsheets/d/..."></div>'
@@ -349,10 +351,13 @@ document.addEventListener('click', async function(e){
     else if(a==='touser'){var us=S.users.filter(function(x){return x.id===id;})[0];var r3=await sb.from('profiles').update({active:!us.active}).eq('id',id);if(r3.error)throw r3.error;await reload();}
     else if(a==='savetok'){
       var ti = document.getElementById('tok-'+id); var tv = ti?ti.value.trim():'';
-      if(!tv){ui.flash='Paste the API token first.';render();return;}
+      var wi = document.getElementById('wu-'+id); var wv = wi?wi.value.trim():'';
+      if(!tv){ui.flash='Paste the token or password first.';render();return;}
+      if(wi && !wv){ui.flash='Type the WordPress username first.';render();return;}
       el.disabled = true;
-      await api({action:'save-secret',site_id:id,token:tv});
-      await reload('Token saved. It is stored encrypted on the server.');
+      var sp = {action:'save-secret',site_id:id,token:tv}; if(wi) sp.username = wv;
+      await api(sp);
+      await reload('Saved. It is stored encrypted on the server.');
     }
     else if(a==='retry'){
       el.disabled = true; ui.flash='Publishing...'; render();
