@@ -117,7 +117,7 @@ async function publishToHackmd(token, title, body) {
 
 // ---------- Telegra.ph ----------
 const TELEGRAPH = 'https://api.telegra.ph';
-const AUTO_KINDS = ['hackmd', 'telegraph'];
+const AUTO_KINDS = ['hackmd', 'telegraph', 'wordpress'];
 
 function inlineNodes(text) {
   const nodes = [];
@@ -191,6 +191,57 @@ async function publishToTelegraph(E, siteId, blob, title, body) {
   const page = await tgCall('createPage', { access_token: token, title: String(title || 'Untitled').slice(0, 250), content, return_content: false });
   if (!/^https:\/\//i.test(page.url || '')) throw new Error('Telegraph did not return a link');
   return page.url;
+}
+
+
+// ---------- WordPress (REST API + Application Password) ----------
+function escHtml(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function inlineHtml(t) {
+  return escHtml(t)
+    .replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, '<img src="$2" alt="$1">')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>');
+}
+function mdToHtml(md) {
+  const out = []; let para = [], list = '';
+  const flushPara = () => { if (para.length) { out.push('<p>' + para.map(inlineHtml).join('<br>') + '</p>'); para = []; } };
+  const flushList = () => { if (list) { out.push('</' + list + '>'); list = ''; } };
+  String(md || '').replace(/\r/g, '').split('\n').forEach(raw => {
+    const l = raw.trim(); let m;
+    if (!l) { flushPara(); flushList(); return; }
+    if ((m = /^(#{1,6})\s+(.*)$/.exec(l))) { flushPara(); flushList(); const n = Math.min(4, Math.max(2, m[1].length)); out.push('<h' + n + '>' + inlineHtml(m[2]) + '</h' + n + '>'); return; }
+    if ((m = /^[-*]\s+(.*)$/.exec(l))) { flushPara(); if (list !== 'ul') { flushList(); list = 'ul'; out.push('<ul>'); } out.push('<li>' + inlineHtml(m[1]) + '</li>'); return; }
+    if ((m = /^\d+\.\s+(.*)$/.exec(l))) { flushPara(); if (list !== 'ol') { flushList(); list = 'ol'; out.push('<ol>'); } out.push('<li>' + inlineHtml(m[1]) + '</li>'); return; }
+    if ((m = /^>\s?(.*)$/.exec(l))) { flushPara(); flushList(); out.push('<blockquote><p>' + inlineHtml(m[1]) + '</p></blockquote>'); return; }
+    if (/^(-{3,}|\*{3,})$/.test(l)) { flushPara(); flushList(); out.push('<hr>'); return; }
+    flushList(); para.push(l);
+  });
+  flushPara(); flushList();
+  return out.join('\n');
+}
+
+async function publishToWordpress(host, blob, E, title, body) {
+  if (!/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$/i.test(host || '')) throw new Error('Site name must be a plain domain like example.com');
+  const cred = decrypt(blob, E.key); const cut = cred.indexOf('\n');
+  const user = cred.slice(0, cut), pass = cred.slice(cut + 1);
+  if (cut < 1 || !pass) throw new Error('Saved login is incomplete. Save it again.');
+  const text = String(body || '').trim().replace(/^#\s+[^\n]*\n+/, '');
+  const r = await timed('https://' + host + '/wp-json/wp/v2/posts', {
+    method: 'POST',
+    headers: { Authorization: 'Basic ' + Buffer.from(user + ':' + pass).toString('base64'), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: String(title || 'Untitled'), content: mdToHtml(text), status: 'publish' })
+  }, 25000);
+  const txt = await r.text();
+  let j = null; try { j = JSON.parse(txt); } catch (e) {}
+  if (!r.ok) {
+    const why = (j && (j.message || j.code)) ? String(j.message || j.code).replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').slice(0, 110) : (r.status === 404 ? 'REST API not found (site may block it)' : 'no details');
+    throw new Error('WordPress ' + r.status + ': ' + why);
+  }
+  if (!j || Array.isArray(j) || !j.link) throw new Error('WordPress did not accept the post. The site may redirect (try the exact address with or without www).');
+  if (j.status !== 'publish') throw new Error('WordPress saved it as "' + j.status + '". The account may not be allowed to publish.');
+  if (!/^https:\/\//i.test(j.link)) throw new Error('WordPress did not return a secure link');
+  return j.link;
 }
 
 // ---------- Google Sheet import ----------
@@ -297,7 +348,7 @@ async function handle(req, res) {
   if (req.method === 'GET') {
     // Health check: open /api/pf in the browser. Shows only yes/no, never any secret value.
     const enc = process.env.ENCRYPTION_KEY || '';
-    return out(res, 200, { ok: true, service: 'publishflow', version: 4, has_url: !!process.env.SUPABASE_URL, has_secret_key: !!process.env.SUPABASE_SECRET_KEY, has_encryption_key: /^[0-9a-f]{64}$/i.test(enc) });
+    return out(res, 200, { ok: true, service: 'publishflow', version: 5, has_url: !!process.env.SUPABASE_URL, has_secret_key: !!process.env.SUPABASE_SECRET_KEY, has_encryption_key: /^[0-9a-f]{64}$/i.test(enc) });
   }
   if (req.method !== 'POST') throw new HttpError(405, 'POST only');
   const E = env();
@@ -320,6 +371,11 @@ async function handle(req, res) {
     return out(res, 200, { sites: rows.filter(r => r.secret).map(r => r.site_id) });
   }
 
+  if (action === 'ready') {
+    const rows = await db(E, 'site_secrets?select=site_id,secret');
+    return out(res, 200, { sites: rows.filter(r => r.secret).map(r => r.site_id) });
+  }
+
   if (action === 'save-secret') {
     if (!prof.is_admin) throw new HttpError(403, 'Admins only');
     const siteId = String(body.site_id || '');
@@ -328,8 +384,14 @@ async function handle(req, res) {
     if (token.length < 10 || token.length > 500) throw new HttpError(400, 'Token looks wrong');
     const sites = await db(E, 'sites?id=eq.' + siteId + '&select=id,kind');
     if (!sites[0]) throw new HttpError(404, 'Site not found');
-    if (sites[0].kind !== 'hackmd') throw new HttpError(400, 'This site is not a HackMD site');
-    await db(E, 'site_secrets?on_conflict=site_id', 'POST', { site_id: siteId, secret: encrypt(token, E.key) }, 'resolution=merge-duplicates');
+    if (sites[0].kind !== 'hackmd' && sites[0].kind !== 'wordpress') throw new HttpError(400, 'This site does not use a saved login');
+    let plain = token;
+    if (sites[0].kind === 'wordpress') {
+      const uname = String(body.username || '').trim();
+      if (!uname || uname.length > 100 || /[\n:]/.test(uname)) throw new HttpError(400, 'WordPress username looks wrong');
+      plain = uname + '\n' + token;
+    }
+    await db(E, 'site_secrets?on_conflict=site_id', 'POST', { site_id: siteId, secret: encrypt(plain, E.key) }, 'resolution=merge-duplicates');
     return out(res, 200, { ok: true });
   }
 
@@ -346,11 +408,11 @@ async function handle(req, res) {
     if (!sub) throw new HttpError(404, 'Article not found');
     if (sub.user_id !== user.id && !prof.is_admin) throw new HttpError(403, 'Not your article');
     if (!sub.site_id) throw new HttpError(400, 'Site was removed');
-    const sites = await db(E, 'sites?id=eq.' + sub.site_id + '&select=id,kind');
+    const sites = await db(E, 'sites?id=eq.' + sub.site_id + '&select=id,kind,name');
     if (!sites[0] || !AUTO_KINDS.includes(sites[0].kind)) throw new HttpError(400, 'This site is not set for auto-publish');
     const kind = sites[0].kind;
     const secs = await db(E, 'site_secrets?site_id=eq.' + sub.site_id + '&select=secret');
-    if (kind === 'hackmd' && (!secs[0] || !secs[0].secret)) throw new HttpError(400, 'Token is not set for this site yet. The article stays in the queue.');
+    if (kind !== 'telegraph' && (!secs[0] || !secs[0].secret)) throw new HttpError(400, 'Login is not set for this site yet. The article stays in the queue.');
 
     const allowed = prof.is_admin ? 'in.(queued,failed,publishing)' : 'eq.queued';
     const claimed = await db(E, 'submissions?id=eq.' + subId + '&status=' + allowed, 'PATCH', { status: 'publishing', error: null }, 'return=representation');
@@ -359,6 +421,7 @@ async function handle(req, res) {
     try {
       let link;
       if (kind === 'hackmd') link = await publishToHackmd(decrypt(secs[0].secret, E.key), sub.title, sub.body);
+      else if (kind === 'wordpress') link = await publishToWordpress(sites[0].name, secs[0].secret, E, sub.title, sub.body);
       else link = await publishToTelegraph(E, sub.site_id, secs[0] && secs[0].secret, sub.title, sub.body);
       await db(E, 'submissions?id=eq.' + subId, 'PATCH', { status: 'live', live_url: link, error: null });
       return out(res, 200, { ok: true, live_url: link });
@@ -381,4 +444,4 @@ module.exports = async (req, res) => {
   }
 };
 
-module.exports._test = { encrypt, decrypt, noteContent, makeSlug, mdToNodes, parseCSV, sheetRows, sheetCsvUrl };
+module.exports._test = { encrypt, decrypt, noteContent, makeSlug, mdToHtml, mdToNodes, parseCSV, sheetRows, sheetCsvUrl };
